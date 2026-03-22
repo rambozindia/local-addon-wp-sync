@@ -1,0 +1,466 @@
+/* ═══════════════════════════════════════════
+   WP Live Sync - Add-on Styles
+   Designed to integrate with Local's dark UI
+   ═══════════════════════════════════════════ */
+
+.wps-panel {
+  padding: 20px;
+  color: #c2c2c2;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* ── Header ── */
+.wps-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.wps-header-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #51bb7b, #368f5a);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  flex-shrink: 0;
+}
+
+.wps-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #e8e8e8;
+}
+
+.wps-subtitle {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #808080;
+}
+
+/* ── Form Fields ── */
+.wps-connection-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.wps-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wps-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #a0a0a0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.wps-input {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: #e0e0e0;
+  font-size: 14px;
+  transition: border-color 0.15s;
+}
+
+.wps-input:focus {
+  outline: none;
+  border-color: #51bb7b;
+  box-shadow: 0 0 0 2px rgba(81, 187, 123, 0.15);
+}
+
+.wps-input::placeholder {
+  color: #555;
+}
+
+.wps-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.wps-hint {
+  font-size: 11px;
+  color: #666;
+  margin-top: 2px;
+}
+
+/* ── Buttons ── */
+.wps-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.wps-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.wps-btn-primary {
+  background: linear-gradient(135deg, #51bb7b, #3da066);
+  color: white;
+  margin-top: 8px;
+}
+
+.wps-btn-primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #5dcf8a, #45b073);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(81, 187, 123, 0.3);
+}
+
+.wps-btn-pull {
+  background: linear-gradient(135deg, #4a90d9, #3672b5);
+  color: white;
+}
+
+.wps-btn-pull:hover:not(:disabled) {
+  background: linear-gradient(135deg, #5a9ee6, #4080c4);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(74, 144, 217, 0.3);
+}
+
+.wps-btn-push {
+  background: linear-gradient(135deg, #e8853a, #d06e24);
+  color: white;
+}
+
+.wps-btn-push:hover:not(:disabled) {
+  background: linear-gradient(135deg, #f09548, #da7e34);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(232, 133, 58, 0.3);
+}
+
+.wps-btn-secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: #c2c2c2;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.wps-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.wps-link-btn {
+  background: none;
+  border: none;
+  color: #808080;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 0;
+  text-align: left;
+}
+
+.wps-link-btn:hover {
+  color: #a0a0a0;
+}
+
+.wps-disconnect {
+  margin-top: 20px;
+  color: #b05050;
+}
+
+.wps-disconnect:hover {
+  color: #d06060;
+}
+
+/* ── Spinner ── */
+.wps-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: wps-spin 0.6s linear infinite;
+}
+
+@keyframes wps-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Info Banner ── */
+.wps-info-banner {
+  background: rgba(74, 144, 217, 0.1);
+  border: 1px solid rgba(74, 144, 217, 0.2);
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.wps-info-banner p {
+  margin: 0;
+}
+
+/* ── Error ── */
+.wps-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(220, 60, 60, 0.1);
+  border: 1px solid rgba(220, 60, 60, 0.25);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 16px;
+  color: #e88;
+}
+
+.wps-error-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.wps-error-dismiss {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #e88;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+/* ── Site Info Card ── */
+.wps-site-info {
+  background: rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+}
+
+.wps-site-info-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+}
+
+.wps-site-info-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #e0e0e0;
+}
+
+.wps-connected-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #51bb7b;
+  box-shadow: 0 0 6px rgba(81, 187, 123, 0.5);
+}
+
+.wps-toggle {
+  font-size: 12px;
+  color: #666;
+}
+
+.wps-site-info-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.wps-tag {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: #999;
+}
+
+.wps-site-info-details {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.wps-detail-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.wps-detail-label {
+  color: #777;
+}
+
+.wps-detail-value {
+  color: #bbb;
+  font-family: 'SF Mono', monospace;
+}
+
+.wps-detail-heading {
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 14px 0 6px;
+}
+
+.wps-plugin-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.wps-plugin-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  font-size: 12px;
+  color: #aaa;
+}
+
+.wps-plugin-version {
+  color: #666;
+  font-family: 'SF Mono', monospace;
+  font-size: 11px;
+}
+
+/* ── Sync Controls ── */
+.wps-sync-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.wps-sync-card {
+  background: rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 18px;
+}
+
+.wps-sync-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.wps-sync-card-header h3 {
+  margin: 0;
+  font-size: 15px;
+  color: #e0e0e0;
+}
+
+.wps-sync-pull .wps-sync-card-header { color: #4a90d9; }
+.wps-sync-push .wps-sync-card-header { color: #e8853a; }
+
+.wps-sync-desc {
+  font-size: 13px;
+  color: #888;
+  line-height: 1.5;
+  margin: 0 0 14px;
+}
+
+/* ── Progress ── */
+.wps-sync-progress {
+  text-align: center;
+  padding: 40px 20px;
+}
+
+.wps-progress-bar-container {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.wps-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #51bb7b, #4a90d9);
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+
+.wps-progress-message {
+  font-size: 14px;
+  color: #c2c2c2;
+  margin: 0 0 4px;
+}
+
+.wps-progress-stage {
+  font-size: 11px;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0;
+}
+
+/* ── Modal ── */
+.wps-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.wps-modal {
+  background: #2a2a2e;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 24px;
+  max-width: 420px;
+  width: 90%;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+}
+
+.wps-modal-title {
+  margin: 0 0 12px;
+  font-size: 16px;
+  color: #e0e0e0;
+}
+
+.wps-modal-body {
+  font-size: 13px;
+  color: #999;
+  line-height: 1.6;
+  margin: 0 0 20px;
+}
+
+.wps-modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+/* ── Loading ── */
+.wps-loading {
+  text-align: center;
+  padding: 40px;
+  color: #666;
+}
