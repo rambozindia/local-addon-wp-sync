@@ -134,28 +134,6 @@ export const WPSyncPanel: React.FC<Props> = ({ site }) => {
     }
   };
 
-  const handleCreateSite = async (newSiteName: string) => {
-    if (!connection) return;
-    setError(null);
-    setView('syncing');
-    setSyncProgress({ stage: 'connecting', percent: 0, message: 'Starting site creation...' });
-
-    try {
-      const result = await ipcRenderer.invoke(IPC_EVENTS.CREATE_SITE_FROM_LIVE, {
-        connection,
-        newSiteName,
-      });
-
-      if (!result.success) {
-        setError(result.error);
-        setView('connected');
-      }
-    } catch (err: any) {
-      setError(err.message);
-      setView('connected');
-    }
-  };
-
   const handlePush = async () => {
     if (!connection) return;
     setError(null);
@@ -224,7 +202,6 @@ export const WPSyncPanel: React.FC<Props> = ({ site }) => {
           <SyncControls
             onPull={handlePull}
             onPush={handlePush}
-            onCreateSite={handleCreateSite}
             onDisconnect={handleDisconnect}
             siteName={site.name}
             remoteUrl={connection.siteUrl}

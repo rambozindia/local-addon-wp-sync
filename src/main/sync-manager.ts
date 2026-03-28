@@ -324,13 +324,22 @@ export class SyncManager {
   // ═══════════════════════════════════════════════
 
   private getLocalSite(siteId: string): any {
-    // Access Local's site data through the service container
     const siteData = this.serviceContainer?.siteData;
-    if (siteData) {
-      const site = siteData.getSite(siteId);
-      if (site) return site;
+    if (!siteData) throw new Error(`Local site with ID "${siteId}" not found.`);
+
+    const site = siteData.getSite(siteId);
+    if (!site) throw new Error(`Local site with ID "${siteId}" not found.`);
+
+    // siteData.getSite() may return a plain object. If getSiteServiceByRole is
+    // missing, wrap it so Local's WpCliService can resolve PHP/DB services.
+    if (typeof site.getSiteServiceByRole !== 'function') {
+      site.getSiteServiceByRole = (role: string) => {
+        const services: Record<string, any> = site.services || {};
+        return Object.values(services).find((s: any) => s.role === role) || null;
+      };
     }
-    throw new Error(`Local site with ID "${siteId}" not found.`);
+
+    return site;
   }
 
   private getLocalSiteUrl(site: any): string {
