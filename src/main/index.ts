@@ -108,6 +108,24 @@ export default function (context: any): void {
   );
 
   // ─────────────────────────────────────────────
+  // IPC: Create a new Local site from live
+  // ─────────────────────────────────────────────
+  ipcMain.handle(
+    IPC_EVENTS.CREATE_SITE_FROM_LIVE,
+    async (_event: any, { connection, newSiteName }: { connection: SiteConnection; newSiteName: string }) => {
+      try {
+        const tempSiteId = `new-${Date.now()}`;
+        const result = await syncManager.createSiteFromLive(connection, newSiteName, (progress) => {
+          _event.sender.send(IPC_EVENTS.SYNC_PROGRESS, { siteId: tempSiteId, ...progress });
+        });
+        return { success: true, data: result };
+      } catch (error: any) {
+        return { success: false, error: error.message };
+      }
+    }
+  );
+
+  // ─────────────────────────────────────────────
   // IPC: Get remote site info (theme, plugins, etc.)
   // ─────────────────────────────────────────────
   ipcMain.handle(

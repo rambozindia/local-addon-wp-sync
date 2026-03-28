@@ -150,6 +150,38 @@
   box-shadow: 0 4px 12px rgba(232, 133, 58, 0.3);
 }
 
+.wps-btn-create {
+  background: linear-gradient(135deg, #7c5cbf, #5e40a6);
+  color: white;
+}
+
+.wps-btn-create:hover:not(:disabled) {
+  background: linear-gradient(135deg, #8d6dcf, #6e50b6);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(124, 92, 191, 0.3);
+}
+
+.wps-sync-create {
+  border-color: rgba(124, 92, 191, 0.3);
+}
+
+.wps-input {
+  width: 100%;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 14px;
+  margin-bottom: 16px;
+  box-sizing: border-box;
+  outline: none;
+}
+
+.wps-input:focus {
+  border-color: rgba(124, 92, 191, 0.6);
+}
+
 .wps-btn-secondary {
   background: rgba(255, 255, 255, 0.08);
   color: #c2c2c2;
@@ -456,6 +488,138 @@
   display: flex;
   gap: 10px;
   justify-content: flex-end;
+}
+
+/* ══════════════════════════════════════════
+   CreateFromLiveCard — sites sidebar button
+   ══════════════════════════════════════════ */
+
+.wps-sidebar-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: rgba(124, 92, 191, 0.12);
+  border: 1px solid rgba(124, 92, 191, 0.3);
+  border-radius: 6px;
+  color: #b39ddb;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  box-sizing: border-box;
+  margin-bottom: 8px;
+}
+
+.wps-sidebar-btn:hover {
+  background: rgba(124, 92, 191, 0.25);
+  color: #fff;
+}
+
+/* ── Full-screen overlay modal ── */
+.wps-cfl-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.wps-cfl-modal {
+  background: #1e1e2e;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  padding: 32px;
+  width: 480px;
+  max-width: 95vw;
+  max-height: 90vh;
+  overflow-y: auto;
+  color: #c2c2c2;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.wps-cfl-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.wps-cfl-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0;
+}
+
+.wps-cfl-close {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 22px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.wps-cfl-close:hover {
+  color: #fff;
+}
+
+.wps-cfl-subtitle {
+  font-size: 13px;
+  color: #888;
+  margin: 0 0 20px;
+  line-height: 1.6;
+}
+
+.wps-cfl-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+/* Progress view */
+.wps-cfl-progress {
+  padding: 16px 0;
+}
+
+.wps-cfl-hint {
+  font-size: 12px;
+  color: #666;
+  text-align: center;
+  margin-top: 8px;
+}
+
+/* Done / Error view */
+.wps-cfl-result {
+  text-align: center;
+  padding: 16px 0;
+}
+
+.wps-cfl-success-icon {
+  font-size: 48px;
+  color: #51bb7b;
+  margin-bottom: 12px;
+}
+
+.wps-cfl-result h3 {
+  color: #fff;
+  margin: 0 0 8px;
+}
+
+.wps-cfl-result p {
+  font-size: 13px;
+  color: #888;
+  margin: 0 0 20px;
+}
+
+.wps-cfl-error-box {
+  margin-bottom: 16px;
 }
 
 /* ── Loading ── */

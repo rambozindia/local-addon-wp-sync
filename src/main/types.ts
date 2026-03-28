@@ -34,6 +34,7 @@ export type SyncStage =
   | 'uploading-files'
   | 'uploading-db'
   | 'importing-remote-db'
+  | 'creating-site'
   | 'cleanup'
   | 'complete'
   | 'error';

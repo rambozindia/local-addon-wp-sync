@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { execSync, exec } from 'child_process';
+import { execSync } from 'child_process';
 import { WPSyncApiClient } from './api-client';
 import { SiteConnection, SyncProgress, SyncResult, RemoteSiteInfo } from './types';
 
@@ -45,6 +45,127 @@ export class SyncManager {
   async getRemoteSiteInfo(connection: SiteConnection): Promise<RemoteSiteInfo> {
     const client = new WPSyncApiClient(connection);
     return client.getSiteInfo();
+  }
+
+  /**
+   * Create a brand-new Local WP site from a live site.
+   * Downloads the live site's files and DB then provisions a new Local site.
+   */
+  async createSiteFromLive(
+    connection: SiteConnection,
+    newSiteName: string,
+    onProgress: ProgressCallback
+  ): Promise<SyncResult & { newSiteId?: string }> {
+    const startTime = Date.now();
+    const warnings: string[] = [];
+    const client = new WPSyncApiClient(connection);
+    const tempSiteId = `new-${Date.now()}`;
+    const tempDir = this.getTempDir(tempSiteId);
+
+    try {
+      fs.mkdirSync(tempDir, { recursive: true });
+
+      // ── Stage 1: Export database on remote ──
+      onProgress({ stage: 'exporting-db', percent: 5, message: 'Requesting database export from live site...' });
+      const dbExport = await client.exportDatabase();
+
+      // ── Stage 2: Download database ──
+      onProgress({ stage: 'downloading-db', percent: 15, message: `Downloading database (${formatBytes(dbExport.size)})...` });
+      const dbPath = path.join(tempDir, 'database.sql');
+      await this.downloadToFile(client, dbExport.token, dbPath);
+
+      // ── Stage 3: Export files on remote ──
+      onProgress({ stage: 'exporting-files', percent: 25, message: 'Requesting file archive from live site...' });
+      const filesExport = await client.exportFiles('full');
+
+      // ── Stage 4: Download files ──
+      onProgress({ stage: 'downloading-files', percent: 40, message: `Downloading files (${formatBytes(filesExport.size)})...` });
+      const filesPath = path.join(tempDir, 'files.zip');
+      await this.downloadToFile(client, filesExport.token, filesPath);
+
+      // ── Stage 5: Provision new Local site ──
+      onProgress({ stage: 'creating-site', percent: 55, message: `Creating new Local site "${newSiteName}"...` });
+      const newSite = await this.provisionNewSite(newSiteName);
+
+      // ── Stage 6: Extract files into new site ──
+      onProgress({ stage: 'extracting-files', percent: 65, message: 'Extracting files into new site...' });
+      const sitePath = newSite.paths?.webRoot || newSite.path;
+      if (fs.existsSync(sitePath)) {
+        execSync(`chmod -R u+w "${sitePath}"`, { stdio: 'ignore' });
+      }
+      const filesCount = await this.extractFiles(filesPath, sitePath);
+
+      // ── Stage 7: Import database ──
+      onProgress({ stage: 'importing-db', percent: 78, message: 'Importing database via WP-CLI...' });
+      await this.importDatabase(newSite, dbPath);
+
+      // ── Stage 8: Search-replace URLs ──
+      onProgress({ stage: 'rewriting-urls', percent: 88, message: 'Rewriting URLs for local environment...' });
+      const localUrl = this.getLocalSiteUrl(newSite);
+      await this.searchReplaceUrls(newSite, connection.siteUrl, localUrl);
+
+      // ── Stage 9: Cleanup ──
+      onProgress({ stage: 'cleanup', percent: 95, message: 'Cleaning up temporary files...' });
+      await client.cleanup(dbExport.token).catch(() => {});
+      await client.cleanup(filesExport.token).catch(() => {});
+      this.cleanupTemp(tempDir);
+
+      onProgress({ stage: 'complete', percent: 100, message: `New site "${newSiteName}" created successfully!` });
+
+      return {
+        success: true,
+        filesTransferred: filesCount,
+        dbImported: true,
+        duration: Date.now() - startTime,
+        warnings,
+        newSiteId: newSite.id,
+      };
+    } catch (error: any) {
+      onProgress({ stage: 'error', percent: 0, message: error.message });
+      this.cleanupTemp(tempDir);
+      throw error;
+    }
+  }
+
+  /**
+   * Provision a new Local WP site using Local's service container.
+   */
+  private async provisionNewSite(siteName: string): Promise<any> {
+    // Local registers AddSiteService as "addSite" in the service container
+    const addSiteService = this.serviceContainer?.addSite;
+
+    const slug = siteName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const domain = `${slug}.local`;
+    const sitesDir = path.join(require('os').homedir(), 'Local Sites');
+    const sitePath = path.join(sitesDir, siteName);
+
+    if (addSiteService?.addSite) {
+      // Use Local's own AddSiteService — this creates a proper Site instance
+      // with all methods (getSiteServiceByRole etc.) and provisions it correctly.
+      // installWP: false because we overwrite with our own files right after.
+      const site = await addSiteService.addSite({
+        newSiteInfo: {
+          siteName,
+          sitePath,
+          siteDomain: domain,
+          environment: 'preferred',
+          multiSite: 'no',
+          xdebugEnabled: false,
+        },
+        wpCredentials: {
+          adminUsername: 'admin',
+          adminPassword: 'admin',
+          adminEmail: 'admin@example.com',
+        },
+        goToSite: false,
+        installWP: false,
+      });
+      return site;
+    }
+
+    throw new Error(
+      'Could not create a new Local site: AddSiteService not found in service container.'
+    );
   }
 
   /**
@@ -224,64 +345,59 @@ export class SyncManager {
    */
   private async extractFiles(zipPath: string, destPath: string): Promise<number> {
     const decompress = require('decompress');
+
+    // Ensure existing files are writable so decompress can overwrite them
+    if (fs.existsSync(destPath)) {
+      execSync(`chmod -R u+w "${destPath}"`, { stdio: 'ignore' });
+    }
+
     const files = await decompress(zipPath, destPath, { strip: 1 });
     return files.length;
   }
 
   /**
-   * Import a SQL file into the Local site's database using WP-CLI.
+   * Import a SQL file into the Local site's database using Local's WpCliService.
    */
   private async importDatabase(site: any, sqlPath: string): Promise<void> {
-    const wpCliPath = this.getWpCliPath();
-    const sitePath = site.paths?.webRoot || site.path;
-
-    execSync(`"${wpCliPath}" db import "${sqlPath}" --path="${sitePath}"`, {
-      timeout: 120000,
-      env: { ...process.env, ...this.getWpCliEnv(site) },
-    });
+    await this.runWpCli(site, ['db', 'import', sqlPath]);
   }
 
   /**
-   * Export the Local site's database to a SQL file.
+   * Export the Local site's database to a SQL file using Local's WpCliService.
    */
   private async exportLocalDatabase(site: any, destPath: string): Promise<void> {
-    const wpCliPath = this.getWpCliPath();
-    const sitePath = site.paths?.webRoot || site.path;
-
-    execSync(`"${wpCliPath}" db export "${destPath}" --path="${sitePath}"`, {
-      timeout: 120000,
-      env: { ...process.env, ...this.getWpCliEnv(site) },
-    });
+    await this.runWpCli(site, ['db', 'export', destPath]);
   }
 
   /**
-   * Run WP-CLI search-replace to rewrite URLs.
+   * Run WP-CLI search-replace to rewrite URLs using Local's WpCliService.
    */
   private async searchReplaceUrls(site: any, fromUrl: string, toUrl: string): Promise<void> {
-    const wpCliPath = this.getWpCliPath();
-    const sitePath = site.paths?.webRoot || site.path;
-
-    // Strip trailing slashes for consistent replacement
     const from = fromUrl.replace(/\/+$/, '');
     const to = toUrl.replace(/\/+$/, '');
 
-    execSync(
-      `"${wpCliPath}" search-replace "${from}" "${to}" --all-tables --path="${sitePath}"`,
-      {
-        timeout: 120000,
-        env: { ...process.env, ...this.getWpCliEnv(site) },
-      }
-    );
+    await this.runWpCli(site, ['search-replace', from, to, '--all-tables']);
 
     // Also handle https↔http variants
     const fromHttps = from.replace('http://', 'https://');
-    const fromHttp = from.replace('https://', 'http://');
     if (fromHttps !== from) {
-      execSync(
-        `"${wpCliPath}" search-replace "${fromHttps}" "${to}" --all-tables --path="${sitePath}"`,
-        { timeout: 120000, env: { ...process.env, ...this.getWpCliEnv(site) } }
+      await this.runWpCli(site, ['search-replace', fromHttps, to, '--all-tables']);
+    }
+  }
+
+  /**
+   * Run a WP-CLI command via Local's built-in WpCliService (serviceContainer.wpCli).
+   * This handles PHP binary resolution, MySQL env vars, and port configs automatically.
+   */
+  private async runWpCli(site: any, args: string[]): Promise<void> {
+    const wpCli = this.serviceContainer?.wpCli;
+    if (!wpCli?.run) {
+      throw new Error(
+        `Could not resolve 'wpCli' from Local's service container. ` +
+        `Make sure the site is running before importing the database.`
       );
     }
+    await wpCli.run(site, args, { skipPlugins: false, skipThemes: false });
   }
 
   /**
@@ -315,45 +431,6 @@ export class SyncManager {
       archive.directory(sitePath, false);
       archive.finalize();
     });
-  }
-
-  /**
-   * Get the path to Local's bundled WP-CLI binary.
-   */
-  private getWpCliPath(): string {
-    const wpCli = this.serviceContainer?.localWpCli;
-    if (wpCli?.getPath) {
-      return wpCli.getPath();
-    }
-    // Fallback paths
-    const platform = process.platform;
-    if (platform === 'darwin') {
-      return '/Applications/Local.app/Contents/Resources/extraResources/bin/wp-cli/wp';
-    } else if (platform === 'win32') {
-      return 'C:\\Program Files (x86)\\Local\\resources\\extraResources\\bin\\wp-cli\\wp.exe';
-    }
-    return '/opt/Local/resources/extraResources/bin/wp-cli/wp';
-  }
-
-  /**
-   * Get environment variables needed for WP-CLI to connect to Local's MySQL.
-   */
-  private getWpCliEnv(site: any): Record<string, string> {
-    // Local manages MySQL per-site; WP-CLI reads wp-config.php
-    return {
-      WP_CLI_PHP: site.phpVersion
-        ? this.getPhpBinaryPath(site.phpVersion)
-        : '',
-    };
-  }
-
-  private getPhpBinaryPath(version: string): string {
-    // Local bundles PHP versions
-    const platform = process.platform;
-    if (platform === 'darwin') {
-      return `/Applications/Local.app/Contents/Resources/extraResources/lightning-services/php-${version}+*/bin/php`;
-    }
-    return '';
   }
 
   private cleanupTemp(tempDir: string): void {

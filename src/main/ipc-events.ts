@@ -14,4 +14,7 @@ export const IPC_EVENTS = {
 
   // Remote site info
   GET_REMOTE_INFO: 'wp-sync:get-remote-info',
+
+  // Create a new Local site from live
+  CREATE_SITE_FROM_LIVE: 'wp-sync:create-site-from-live',
 } as const;

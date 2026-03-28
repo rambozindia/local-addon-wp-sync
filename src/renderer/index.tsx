@@ -1,33 +1,40 @@
 import * as LocalRenderer from '@getflywheel/local/renderer';
 import { WPSyncPanel } from './components/WPSyncPanel';
+import { CreateFromLiveCard } from './components/CreateFromLiveCard';
 
-/**
- * WP Live Sync - Renderer Process
- *
- * Registers a new sidebar panel on each Local site
- * that provides pull/push controls for the live site.
- */
 export default function (context: any): void {
   const { React, hooks } = context;
-  const { Route } = context.ReactRouter || {};
+  const { Route, NavLink } = context.ReactRouter;
 
-  // Register our panel in the site's sidebar menu
-  hooks.addContent('siteInfoToolsSection', (site: any) => {
-    return React.createElement(WPSyncPanel, { site, key: 'wp-sync-panel' });
+  // Add "WP Live Sync" tab in site info navigation
+  hooks.addContent('SiteInfo_TabNav_Items', (site: any) => {
+    return React.createElement(
+      NavLink,
+      {
+        key: 'wp-sync-tab',
+        to: `/main/site-info/${site.id}/wp-sync`,
+        activeClassName: 'active',
+      },
+      'WP Live Sync'
+    );
   });
 
-  // Also add a menu item in the sidebar
-  hooks.addFilter('siteInfoMoreMenu', (menu: any[], site: any) => {
-    return [
-      ...menu,
-      {
-        label: 'WP Live Sync',
-        enabled: true,
-        click: () => {
-          // Navigate to our panel
-          context.events.send('goToRoute', `/site-info/${site.id}/wp-sync`);
-        },
-      },
-    ];
+  // Add "Pull from Live Site" button above the sites list
+  hooks.addContent('SitesSidebar_SiteList:Before', () => {
+    return React.createElement(CreateFromLiveCard, { key: 'wp-sync-create-from-live' });
+  });
+
+  // Register the route for our tab content
+  hooks.addContent('routes[site-info]', ({ routeChildrenProps }: any) => {
+    return React.createElement(Route, {
+      key: 'wp-sync-route',
+      path: '/main/site-info/:siteId/wp-sync',
+      render: (props: any) =>
+        React.createElement(WPSyncPanel, {
+          ...props,
+          ...routeChildrenProps,
+          site: routeChildrenProps.site,
+        }),
+    });
   });
 }
