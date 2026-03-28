@@ -118,6 +118,14 @@ export default function (context: any): void {
         const result = await syncManager.createSiteFromLive(connection, newSiteName, (progress) => {
           _event.sender.send(IPC_EVENTS.SYNC_PROGRESS, { siteId: tempSiteId, ...progress });
         });
+
+        // Save the connection for the new site so WP Live Sync tab is pre-connected
+        if (result.newSiteId) {
+          const connections = loadConnections(connectionsFile);
+          connections[result.newSiteId] = connection;
+          saveConnections(connectionsFile, connections);
+        }
+
         return { success: true, data: result };
       } catch (error: any) {
         return { success: false, error: error.message };

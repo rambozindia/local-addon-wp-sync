@@ -95,8 +95,26 @@ export class SyncManager {
       }
       const filesCount = await this.extractFiles(filesPath, sitePath);
 
-      // ── Stage 7: Import database ──
-      onProgress({ stage: 'importing-db', percent: 78, message: 'Importing database via WP-CLI...' });
+      // ── Stage 7: Wait for MySQL and generate wp-config.php ──
+      onProgress({ stage: 'importing-db', percent: 75, message: 'Waiting for MySQL to be ready...' });
+      await this.waitForMySqlReady(newSite);
+
+      onProgress({ stage: 'importing-db', percent: 78, message: 'Generating wp-config.php...' });
+      const dbName = newSite.mysql?.database || 'local';
+      const dbUser = newSite.mysql?.user || 'root';
+      const dbPass = newSite.mysql?.password || 'root';
+      await this.runWpCli(newSite, [
+        'config', 'create',
+        `--dbname=${dbName}`,
+        `--dbuser=${dbUser}`,
+        `--dbpass=${dbPass}`,
+        '--dbhost=localhost',
+        '--skip-check',
+        '--force',
+      ]);
+
+      // ── Stage 8: Import database ──
+      onProgress({ stage: 'importing-db', percent: 82, message: 'Importing database via WP-CLI...' });
       await this.importDatabase(newSite, dbPath);
 
       // ── Stage 8: Search-replace URLs ──
@@ -351,15 +369,45 @@ export class SyncManager {
       execSync(`chmod -R u+w "${destPath}"`, { stdio: 'ignore' });
     }
 
-    const files = await decompress(zipPath, destPath, { strip: 1 });
+    const files = await decompress(zipPath, destPath);
     return files.length;
   }
 
   /**
-   * Import a SQL file into the Local site's database using Local's WpCliService.
+   * Import a SQL file directly via Local's MySQL binary (bypasses WP-CLI).
+   * More reliable than `wp db import` for new sites without WordPress loaded.
    */
   private async importDatabase(site: any, sqlPath: string): Promise<void> {
-    await this.runWpCli(site, ['db', 'import', sqlPath]);
+    const { execFile } = require('child_process');
+    const Local = require('@getflywheel/local');
+    const lightningServices = this.serviceContainer?.lightningServices;
+    const dbService = lightningServices?.getSiteServiceByRole(site, Local.SiteServiceRole.DATABASE);
+
+    if (!dbService) {
+      throw new Error('Could not get MySQL service for this site.');
+    }
+
+    // Resolve the mysql binary from the service's $PATH
+    const mysqlBin = require('path').join(dbService.$PATH, 'mysql');
+    const socket = path.join(
+      require('electron').app.getPath('userData'),
+      'run', site.id, 'mysql', 'mysqld.sock'
+    );
+    const dbName = site.mysql?.database || 'local';
+    const dbUser = site.mysql?.user || 'root';
+    const dbPass = site.mysql?.password || 'root';
+
+    await new Promise<void>((resolve, reject) => {
+      const child = execFile(
+        mysqlBin,
+        [`-u${dbUser}`, `-p${dbPass}`, `--socket=${socket}`, dbName],
+        (error: any, _stdout: string, stderr: string) => {
+          if (error) reject(new Error(stderr || error.message));
+          else resolve();
+        }
+      );
+      fs.createReadStream(sqlPath).pipe(child.stdin);
+    });
   }
 
   /**
@@ -383,6 +431,27 @@ export class SyncManager {
     if (fromHttps !== from) {
       await this.runWpCli(site, ['search-replace', fromHttps, to, '--all-tables']);
     }
+  }
+
+  /**
+   * Poll for the MySQL socket file so we don't attempt db import before MySQL is ready.
+   * Local stores sockets at {userData}/run/{siteId}/mysql/mysqld.sock
+   */
+  private async waitForMySqlReady(site: any, timeoutMs = 60000): Promise<void> {
+    const userData = require('electron').app.getPath('userData');
+    const socketPath = path.join(userData, 'run', site.id, 'mysql', 'mysqld.sock');
+    const interval = 1000;
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      if (fs.existsSync(socketPath)) return;
+      await new Promise((resolve) => setTimeout(resolve, interval));
+    }
+
+    throw new Error(
+      `MySQL did not become ready within ${timeoutMs / 1000}s. ` +
+      `Socket not found at: ${socketPath}`
+    );
   }
 
   /**
