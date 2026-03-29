@@ -1,0 +1,23 @@
+# WP Sync Companion — increase upload limits for database/file sync
+# This only applies on Apache. For Nginx, configure client_max_body_size in your server block.
+<IfModule mod_php.c>
+    php_value upload_max_filesize 512M
+    php_value post_max_size       512M
+    php_value memory_limit        512M
+    php_value max_execution_time  600
+    php_value max_input_time      600
+</IfModule>
+<IfModule mod_php8.c>
+    php_value upload_max_filesize 512M
+    php_value post_max_size       512M
+    php_value memory_limit        512M
+    php_value max_execution_time  600
+    php_value max_input_time      600
+</IfModule>
+<IfModule mod_php7.c>
+    php_value upload_max_filesize 512M
+    php_value post_max_size       512M
+    php_value memory_limit        512M
+    php_value max_execution_time  600
+    php_value max_input_time      600
+</IfModule>

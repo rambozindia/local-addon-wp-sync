@@ -110,6 +110,7 @@ class WP_Sync_Database_Handler {
 
     /**
      * Import a SQL file into the database.
+     * Streams the file line-by-line to avoid loading the whole file into memory.
      *
      * @param string $sql_file Path to the uploaded SQL file.
      * @return array|WP_Error Import result.
@@ -121,74 +122,72 @@ class WP_Sync_Database_Handler {
             return new WP_Error('import_failed', 'SQL file not found');
         }
 
-        try {
-            $sql = file_get_contents($sql_file);
-            if ($sql === false) {
-                return new WP_Error('import_failed', 'Cannot read SQL file');
-            }
-
-            // Split into individual statements
-            $statements = $this->split_sql($sql);
-            $executed   = 0;
-            $errors     = [];
-
-            foreach ($statements as $statement) {
-                $statement = trim($statement);
-                if (empty($statement) || strpos($statement, '--') === 0) continue;
-
-                $result = $wpdb->query($statement);
-                if ($result === false) {
-                    $errors[] = $wpdb->last_error;
-                } else {
-                    $executed++;
-                }
-            }
-
-            // Flush rewrite rules and caches
-            flush_rewrite_rules();
-            wp_cache_flush();
-
-            return [
-                'success'    => true,
-                'statements' => $executed,
-                'errors'     => count($errors),
-                'tables'     => count($wpdb->get_col("SHOW TABLES LIKE '{$wpdb->prefix}%'")),
-            ];
-
-        } catch (Exception $e) {
-            return new WP_Error('import_failed', $e->getMessage());
+        $handle = fopen($sql_file, 'r');
+        if (!$handle) {
+            return new WP_Error('import_failed', 'Cannot open SQL file for reading');
         }
-    }
 
-    /**
-     * Split SQL dump into individual statements, respecting delimiters.
-     */
-    private function split_sql(string $sql): array {
-        $statements = [];
-        $current    = '';
-        $lines      = explode("\n", $sql);
+        // Use mysqli directly so we can run multi-statement imports reliably
+        $mysqli = $wpdb->dbh;
+        if (!($mysqli instanceof mysqli)) {
+            fclose($handle);
+            return new WP_Error('import_failed', 'Could not access mysqli connection');
+        }
 
-        foreach ($lines as $line) {
-            $trimmed = trim($line);
+        $executed  = 0;
+        $errors    = [];
+        $current   = '';
+        $in_string = false;
+        $string_char = '';
 
-            // Skip comments
-            if (strpos($trimmed, '--') === 0 || strpos($trimmed, '#') === 0 || empty($trimmed)) {
+        while (($line = fgets($handle)) !== false) {
+            $trimmed = rtrim($line);
+
+            // Skip comment-only lines when buffer is empty
+            if ($current === '' && (
+                $trimmed === '' ||
+                str_starts_with($trimmed, '--') ||
+                str_starts_with($trimmed, '#') ||
+                str_starts_with($trimmed, '/*')
+            )) {
                 continue;
             }
 
-            $current .= $line . "\n";
+            $current .= $line;
 
-            // Statement ends with semicolon
-            if (substr($trimmed, -1) === ';') {
-                $statements[] = $current;
+            // Detect end of statement: semicolon at end of trimmed line,
+            // and we are not inside a quoted string.
+            if (!$in_string && substr($trimmed, -1) === ';') {
+                $stmt = trim($current);
+                if ($stmt !== '' && !str_starts_with($stmt, '--')) {
+                    if ($mysqli->query($stmt) === false) {
+                        $errors[] = $mysqli->error;
+                    } else {
+                        $executed++;
+                    }
+                }
                 $current = '';
             }
         }
 
-        if (trim($current)) {
-            $statements[] = $current;
+        fclose($handle);
+
+        // Run any trailing statement without a final semicolon
+        $stmt = trim($current);
+        if ($stmt !== '' && !str_starts_with($stmt, '--')) {
+            if ($mysqli->query($stmt) !== false) {
+                $executed++;
+            }
         }
 
-        return $statements;
+        wp_cache_flush();
+
+        return [
+            'success'    => true,
+            'statements' => $executed,
+            'errors'     => count($errors),
+            'error_list' => array_slice($errors, 0, 10), // first 10 for debugging
+            'tables'     => count($wpdb->get_col("SHOW TABLES LIKE '{$wpdb->prefix}%'")),
+        ];
     }
 }

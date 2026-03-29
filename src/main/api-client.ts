@@ -25,6 +25,16 @@ export class WPSyncApiClient {
         'User-Agent': 'LocalWP-Sync-Addon/1.0',
       },
     });
+
+    // Intercept errors to surface the server's own error message instead of generic Axios messages
+    this.client.interceptors.response.use(
+      (r) => r,
+      (err) => {
+        const serverMsg = err?.response?.data?.error || err?.response?.data?.message;
+        if (serverMsg) err.message = serverMsg;
+        return Promise.reject(err);
+      }
+    );
   }
 
   /**
@@ -82,18 +92,82 @@ export class WPSyncApiClient {
 
   /**
    * Upload a database SQL file to the remote server for import.
+   * Automatically uses chunked upload for files > CHUNK_THRESHOLD to work
+   * around PHP upload_max_filesize limits on shared hosting.
    */
   async uploadDatabase(sqlFilePath: string): Promise<{ success: boolean; tables: number }> {
     const fs = require('fs');
+    const CHUNK_THRESHOLD = 8 * 1024 * 1024; // 8 MB — safe for most default PHP configs
+    const fileSize = fs.statSync(sqlFilePath).size;
+
+    if (fileSize > CHUNK_THRESHOLD) {
+      return this.uploadDatabaseChunked(sqlFilePath);
+    }
+
     const FormData = require('form-data');
     const form = new FormData();
-    form.append('database', fs.createReadStream(sqlFilePath));
+    form.append('database', fs.createReadStream(sqlFilePath), {
+      filename: 'database.sql',
+      contentType: 'application/sql',
+      knownLength: fileSize,
+    });
 
     const response = await this.client.post('/import/database', form, {
       headers: form.getHeaders(),
       timeout: 600000,
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
     });
     return response.data;
+  }
+
+  /**
+   * Upload a database SQL file in chunks to work around PHP upload size limits.
+   * Each chunk is ≤ 8 MB so it fits within even the most restrictive shared hosting.
+   */
+  private async uploadDatabaseChunked(sqlFilePath: string): Promise<{ success: boolean; tables: number }> {
+    const fs = require('fs');
+    const FormData = require('form-data');
+    const crypto = require('crypto');
+
+    const CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB per chunk
+    const fileSize = fs.statSync(sqlFilePath).size;
+    const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
+    const uploadId = crypto.randomBytes(8).toString('hex');
+
+    let lastResponse: any = null;
+    const fd = fs.openSync(sqlFilePath, 'r');
+
+    try {
+      for (let i = 0; i < totalChunks; i++) {
+        const offset = i * CHUNK_SIZE;
+        const length = Math.min(CHUNK_SIZE, fileSize - offset);
+        const buffer = Buffer.alloc(length);
+        fs.readSync(fd, buffer, 0, length, offset);
+
+        const form = new FormData();
+        form.append('upload_id', uploadId);
+        form.append('chunk_index', String(i));
+        form.append('total_chunks', String(totalChunks));
+        form.append('chunk', buffer, {
+          filename: `chunk-${i}.sql`,
+          contentType: 'application/octet-stream',
+          knownLength: length,
+        });
+
+        const response = await this.client.post('/import/database/chunk', form, {
+          headers: form.getHeaders(),
+          timeout: 120000,
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
+        });
+        lastResponse = response.data;
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+
+    return lastResponse;
   }
 
   /**

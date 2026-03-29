@@ -66,6 +66,13 @@ class WP_Sync_REST_Controller {
             'permission_callback' => [$this, 'check_admin_permission'],
         ]);
 
+        // POST /import/database/chunk - Upload a database chunk (for large files)
+        register_rest_route(self::NAMESPACE, '/import/database/chunk', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'import_database_chunk'],
+            'permission_callback' => [$this, 'check_admin_permission'],
+        ]);
+
         // POST /import/files - Upload & extract file archive
         register_rest_route(self::NAMESPACE, '/import/files', [
             'methods'             => 'POST',
@@ -207,8 +214,19 @@ class WP_Sync_REST_Controller {
     public function import_database(WP_REST_Request $request): WP_REST_Response {
         $files = $request->get_file_params();
 
-        if (empty($files['database'])) {
-            return new WP_REST_Response(['error' => 'No database file uploaded'], 400);
+        if (empty($files['database']) || !isset($files['database']['tmp_name'])) {
+            // Diagnose the PHP upload error
+            $err_code = $files['database']['error'] ?? UPLOAD_ERR_NO_FILE;
+            $err_map  = [
+                UPLOAD_ERR_INI_SIZE   => 'File exceeds upload_max_filesize (' . ini_get('upload_max_filesize') . '). Increase it in php.ini.',
+                UPLOAD_ERR_FORM_SIZE  => 'File exceeds post_max_size (' . ini_get('post_max_size') . '). Increase it in php.ini.',
+                UPLOAD_ERR_PARTIAL    => 'File was only partially uploaded.',
+                UPLOAD_ERR_NO_FILE    => 'No database file received. Check post_max_size (' . ini_get('post_max_size') . ') and upload_max_filesize (' . ini_get('upload_max_filesize') . ').',
+                UPLOAD_ERR_NO_TMP_DIR => 'Missing temporary upload folder on server.',
+                UPLOAD_ERR_CANT_WRITE => 'Failed to write file to disk on server.',
+            ];
+            $msg = $err_map[$err_code] ?? 'Upload error code: ' . $err_code;
+            return new WP_REST_Response(['error' => $msg], 400);
         }
 
         $handler = new WP_Sync_Database_Handler();
@@ -221,6 +239,82 @@ class WP_Sync_REST_Controller {
         }
 
         return new WP_REST_Response($result);
+    }
+
+    /**
+     * POST /import/database/chunk
+     *
+     * Receives one chunk of a database SQL file. Chunks are identified by an
+     * upload_id and written sequentially. When the final chunk arrives
+     * (chunk_index + 1 === total_chunks), the assembled file is imported.
+     *
+     * Body params (multipart):
+     *   upload_id    - string, unique identifier for this upload session
+     *   chunk_index  - int, 0-based index of this chunk
+     *   total_chunks - int, total number of chunks
+     *   chunk        - file, the raw chunk data
+     */
+    public function import_database_chunk(WP_REST_Request $request): WP_REST_Response {
+        $upload_id    = sanitize_key($request->get_param('upload_id'));
+        $chunk_index  = (int) $request->get_param('chunk_index');
+        $total_chunks = (int) $request->get_param('total_chunks');
+        $files        = $request->get_file_params();
+
+        if (empty($upload_id) || $total_chunks < 1) {
+            return new WP_REST_Response(['error' => 'Missing upload_id or total_chunks'], 400);
+        }
+
+        if (!isset($files['chunk']) || empty($files['chunk']['tmp_name'])) {
+            $err_code = $files['chunk']['error'] ?? UPLOAD_ERR_NO_FILE;
+            $err_map  = [
+                UPLOAD_ERR_INI_SIZE   => 'Chunk exceeds upload_max_filesize (' . ini_get('upload_max_filesize') . ').',
+                UPLOAD_ERR_FORM_SIZE  => 'Chunk exceeds post_max_size (' . ini_get('post_max_size') . ').',
+                UPLOAD_ERR_PARTIAL    => 'Chunk was only partially uploaded.',
+                UPLOAD_ERR_NO_FILE    => 'No chunk data received.',
+                UPLOAD_ERR_NO_TMP_DIR => 'Missing temporary upload folder.',
+                UPLOAD_ERR_CANT_WRITE => 'Failed to write chunk to disk.',
+            ];
+            return new WP_REST_Response(['error' => $err_map[$err_code] ?? 'Upload error: ' . $err_code], 400);
+        }
+
+        if (!file_exists(WP_SYNC_TEMP_DIR)) {
+            wp_mkdir_p(WP_SYNC_TEMP_DIR);
+        }
+
+        $assembled_path = WP_SYNC_TEMP_DIR . '/chunk-' . $upload_id . '.sql';
+
+        // Append this chunk to the assembled file
+        $chunk_data = file_get_contents($files['chunk']['tmp_name']);
+        if ($chunk_data === false) {
+            return new WP_REST_Response(['error' => 'Failed to read chunk data'], 500);
+        }
+
+        $mode = ($chunk_index === 0) ? 'w' : 'a';
+        $handle = fopen($assembled_path, $mode);
+        if (!$handle) {
+            return new WP_REST_Response(['error' => 'Cannot write assembled SQL file'], 500);
+        }
+        fwrite($handle, $chunk_data);
+        fclose($handle);
+
+        // If this is the last chunk, import the assembled file
+        if ($chunk_index + 1 >= $total_chunks) {
+            $handler = new WP_Sync_Database_Handler();
+            $result  = $handler->import($assembled_path);
+            @unlink($assembled_path);
+
+            if (is_wp_error($result)) {
+                return new WP_REST_Response(['error' => $result->get_error_message()], 500);
+            }
+
+            return new WP_REST_Response(array_merge($result, ['assembled' => true]));
+        }
+
+        return new WP_REST_Response([
+            'received'     => $chunk_index + 1,
+            'total_chunks' => $total_chunks,
+            'assembled'    => false,
+        ]);
     }
 
     /**

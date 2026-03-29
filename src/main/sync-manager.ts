@@ -383,47 +383,116 @@ export class SyncManager {
   }
 
   /**
+   * Resolve MySQL binary paths, socket, and credentials for a Local site.
+   * Derives the mysqldump/mysql binary from the site's services config,
+   * avoiding any dependency on WP-CLI or LightningServicesService.
+   */
+  private getMysqlConfig(site: any) {
+    const userData = require('electron').app.getPath('userData');
+    const os = require('os');
+    const services: Record<string, any> = site.services || {};
+
+    // Find the mysql or mariadb service entry
+    const dbEntry = Object.values(services).find(
+      (s: any) => s.name === 'mysql' || s.name === 'mariadb'
+    ) as any;
+
+    if (!dbEntry) throw new Error('No MySQL/MariaDB service found for this site.');
+
+    // Map platform/arch to the directory name Local uses
+    const platformMap: Record<string, string> = {
+      darwin: os.arch() === 'arm64' ? 'darwin-arm64' : 'darwin',
+      linux:  'linux',
+      win32:  'win32',
+    };
+    const platformDir = platformMap[process.platform] || process.platform;
+
+    // The services version may omit the build suffix (e.g. "8.0.35" vs dir "mysql-8.0.35+4").
+    // Glob for the actual installed directory that starts with name-version.
+    const servicesBase = path.join(userData, 'lightning-services');
+    const prefix = `${dbEntry.name}-${dbEntry.version}`;
+    const entries = fs.readdirSync(servicesBase).filter((d: string) => d.startsWith(prefix));
+    if (!entries.length) throw new Error(`MySQL lightning service not found: ${prefix}`);
+    // Prefer the highest build number if multiple exist
+    entries.sort();
+    const serviceDir = entries[entries.length - 1];
+
+    const binDir = path.join(servicesBase, serviceDir, 'bin', platformDir, 'bin');
+
+    return {
+      mysqlBin:     path.join(binDir, 'mysql'),
+      mysqldumpBin: path.join(binDir, 'mysqldump'),
+      socket: path.join(userData, 'run', site.id, 'mysql', 'mysqld.sock'),
+      dbName: site.mysql?.database || 'local',
+      dbUser: site.mysql?.user     || 'root',
+      dbPass: site.mysql?.password || 'root',
+    };
+  }
+
+  /** Filter mysqldump/mysql warnings that are safe to ignore. */
+  private isMysqlWarning(line: string): boolean {
+    return (
+      line.includes('Using a password on the command line interface can be insecure') ||
+      line.startsWith('mysqldump: [Warning]') ||
+      line.startsWith('mysql: [Warning]') ||
+      line.trim() === ''
+    );
+  }
+
+  /**
    * Import a SQL file directly via Local's MySQL binary (bypasses WP-CLI).
-   * More reliable than `wp db import` for new sites without WordPress loaded.
    */
   private async importDatabase(site: any, sqlPath: string): Promise<void> {
-    const { execFile } = require('child_process');
-    const Local = require('@getflywheel/local');
-    const lightningServices = this.serviceContainer?.lightningServices;
-    const dbService = lightningServices?.getSiteServiceByRole(site, Local.SiteServiceRole.DATABASE);
-
-    if (!dbService) {
-      throw new Error('Could not get MySQL service for this site.');
-    }
-
-    // Resolve the mysql binary from the service's $PATH
-    const mysqlBin = require('path').join(dbService.$PATH, 'mysql');
-    const socket = path.join(
-      require('electron').app.getPath('userData'),
-      'run', site.id, 'mysql', 'mysqld.sock'
-    );
-    const dbName = site.mysql?.database || 'local';
-    const dbUser = site.mysql?.user || 'root';
-    const dbPass = site.mysql?.password || 'root';
+    const { spawn } = require('child_process');
+    const { mysqlBin, socket, dbName, dbUser, dbPass } = this.getMysqlConfig(site);
 
     await new Promise<void>((resolve, reject) => {
-      const child = execFile(
-        mysqlBin,
-        [`-u${dbUser}`, `-p${dbPass}`, `--socket=${socket}`, dbName],
-        (error: any, _stdout: string, stderr: string) => {
-          if (error) reject(new Error(stderr || error.message));
-          else resolve();
+      const child = spawn(mysqlBin, [`-u${dbUser}`, `-p${dbPass}`, `--socket=${socket}`, dbName]);
+
+      let stderr = '';
+      child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+
+      child.on('close', (code: number) => {
+        const realErrors = stderr.split('\n').filter((l: string) => !this.isMysqlWarning(l));
+        if (code !== 0 && realErrors.length > 0) {
+          reject(new Error(realErrors.join('\n')));
+        } else {
+          resolve();
         }
-      );
+      });
+      child.on('error', (err: Error) => reject(err));
+
       fs.createReadStream(sqlPath).pipe(child.stdin);
     });
   }
 
   /**
-   * Export the Local site's database to a SQL file using Local's WpCliService.
+   * Export the Local site's database directly via mysqldump (bypasses WP-CLI).
    */
   private async exportLocalDatabase(site: any, destPath: string): Promise<void> {
-    await this.runWpCli(site, ['db', 'export', destPath]);
+    const { spawn } = require('child_process');
+    const { mysqldumpBin, socket, dbName, dbUser, dbPass } = this.getMysqlConfig(site);
+
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(mysqldumpBin, [
+        `-u${dbUser}`, `-p${dbPass}`, `--socket=${socket}`, '--single-transaction', dbName,
+      ]);
+      const out = fs.createWriteStream(destPath);
+      child.stdout.pipe(out);
+
+      let stderr = '';
+      child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+
+      child.on('close', (code: number) => {
+        const realErrors = stderr.split('\n').filter((l: string) => !this.isMysqlWarning(l));
+        if (code !== 0 && realErrors.length > 0) {
+          reject(new Error(realErrors.join('\n')));
+        } else {
+          resolve();
+        }
+      });
+      child.on('error', (err: Error) => reject(err));
+    });
   }
 
   /**

@@ -19,6 +19,15 @@ defined('ABSPATH') || exit;
 define('WP_SYNC_VERSION', '1.0.0');
 define('WP_SYNC_TEMP_DIR', WP_CONTENT_DIR . '/wp-sync-temp');
 
+// Raise PHP upload limits for our REST endpoints.
+// Many shared hosts default to 8M-64M which is too small for database exports.
+// ini_set only works when PHP is not running in safe mode and the host allows it.
+@ini_set('upload_max_filesize', '512M');
+@ini_set('post_max_size',       '512M');
+@ini_set('memory_limit',        '512M');
+@ini_set('max_execution_time',  '600');
+@ini_set('max_input_time',      '600');
+
 // Load includes
 require_once __DIR__ . '/includes/class-rest-controller.php';
 require_once __DIR__ . '/includes/class-database-handler.php';
