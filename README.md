@@ -2,6 +2,15 @@
 
 Pull your self-hosted WordPress site into Local WP and push changes back to live — all via the WordPress REST API. No SSH or FTP needed.
 
+## Features
+
+- **Pull to Local** — download the live site's database + files into an existing Local site
+- **Push to Live** — deploy your local database + files back to the live server
+- **Create Site from Live** — one click in the Local sidebar provisions a brand-new Local site directly from a live WordPress install (no need to create an empty site first)
+- **Chunked database upload** — large SQL files are uploaded in 8 MB chunks, so pushes work even on shared hosting with restrictive PHP upload limits
+- **Automatic URL rewriting** — live ↔ local URLs are search-replaced on every pull/push
+- **Saved connections** — credentials are remembered per site, so reconnecting is instant
+
 ## How It Works
 
 ```
@@ -20,15 +29,22 @@ Pull your self-hosted WordPress site into Local WP and push changes back to live
 1. Add-on sends a request to the companion plugin's REST API
 2. Companion plugin exports the database as SQL
 3. Companion plugin zips the WordPress files
-4. Add-on downloads both and imports into the Local site
-5. WP-CLI rewrites URLs from `https://yoursite.com` → `http://yoursite.local`
+4. Add-on downloads both, extracts the files into the Local site, and imports the SQL directly through Local's bundled MySQL binary
+5. WP-CLI rewrites URLs from `https://yoursite.com` → `http://yoursite.local` (including the `https` variant)
 
 ### Push Flow (Local → Live)
-1. Add-on exports the local database via WP-CLI
-2. Add-on packages local files into a ZIP
-3. Both are uploaded to the companion plugin's REST API
-4. Companion plugin imports the database and extracts files
-5. `wp-config.php` on live is preserved (never overwritten)
+1. Add-on exports the local database via Local's bundled `mysqldump`
+2. URLs in the SQL dump are rewritten from local → live
+3. Add-on packages local files into a ZIP
+4. Both are uploaded to the companion plugin's REST API — SQL files over 8 MB are sent in chunks and reassembled server-side
+5. Companion plugin imports the database and extracts files
+6. `wp-config.php` on live is preserved (backed up before import and restored after — never overwritten)
+
+### Create Site from Live
+1. Click **Pull from Live Site** above the sites list in Local's sidebar
+2. Enter a new site name plus your live site credentials
+3. The add-on downloads the live database + files, provisions a new Local site via Local's own AddSiteService, waits for MySQL to come up, generates a fresh `wp-config.php`, imports everything, and rewrites URLs
+4. The connection is saved automatically, so the new site's **WP Live Sync** tab is pre-connected
 
 ## Prerequisites
 
@@ -85,25 +101,37 @@ yarn install
 yarn build
 ```
 
-Restart Local WP. The "WP Live Sync" panel will appear in each site's tools section.
+Restart Local WP and enable the add-on. You'll see:
+
+- A **WP Live Sync** tab on each site's info page
+- A **Pull from Live Site** button above the sites list in the sidebar
 
 ## Usage
 
-1. Open a site in Local WP
-2. Find the **WP Live Sync** panel in the site tools
-3. Enter your live site URL, WordPress username, and Application Password
-4. Click **Connect to Live Site**
-5. Use **Pull to Local** to download the live site
-6. Make your changes locally
-7. Use **Push to Live** to deploy changes
+### Sync an existing Local site
+
+1. Open a site in Local WP and switch to the **WP Live Sync** tab
+2. Enter your live site URL, WordPress username, and Application Password
+3. Click **Connect to Live Site**
+4. Use **Pull to Local** to download the live site
+5. Make your changes locally
+6. Use **Push to Live** to deploy changes
+
+### Create a new Local site from a live site
+
+1. Click **Pull from Live Site** above the sites list
+2. Enter a name for the new site plus your live site URL, username, and Application Password
+3. Watch the progress — when it finishes, the new site appears in Local, already connected to the live site
 
 ## Security
 
 - All communication uses WordPress's built-in Application Passwords (Basic Auth over HTTPS)
-- Only administrator-level users can access sync endpoints
-- `wp-config.php` is never included in exports (preserves local/live database credentials)
-- Temporary export files are stored in a protected directory with `.htaccess` deny rules
+- Only administrator-level users (`manage_options`) can access sync endpoints
+- Download tokens are validated (32–64 hex chars) before any file is served
+- `wp-config.php` is never included in exports and is backed up/restored around full imports (preserves local/live database credentials)
+- Temporary export files are stored in a protected directory (`wp-content/wp-sync-temp`) with `.htaccess` deny rules, cleaned up on plugin deactivation
 - ZIP archives are validated against path traversal attacks before extraction
+- Saved connections (including the Application Password) are stored as JSON in Local's user-data directory (`wp-sync-connections.json`) — treat that machine as trusted
 
 **Important:** Always use HTTPS on your live site. Application Passwords over plain HTTP expose credentials.
 
@@ -113,26 +141,28 @@ Restart Local WP. The "WP Live Sync" panel will appear in each site's tools sect
 local-addon-wp-sync/
 ├── src/
 │   ├── main/                    # Node.js (Electron main process)
-│   │   ├── index.ts             # Add-on entry, IPC handlers
-│   │   ├── sync-manager.ts      # Orchestrates pull/push operations
-│   │   ├── api-client.ts        # REST API client for companion plugin
+│   │   ├── index.ts             # Add-on entry, IPC handlers, connection persistence
+│   │   ├── sync-manager.ts      # Orchestrates pull/push/create-from-live operations
+│   │   ├── api-client.ts        # REST API client (incl. chunked DB upload)
 │   │   ├── ipc-events.ts        # IPC event constants
 │   │   └── types.ts             # TypeScript interfaces
 │   └── renderer/                # React (Electron renderer process)
 │       ├── index.tsx             # Renderer entry, hook registration
 │       ├── styles.css            # Add-on UI styles
 │       └── components/
-│           ├── WPSyncPanel.tsx   # Main panel component
-│           ├── ConnectionForm.tsx # Connection setup form
-│           ├── SyncControls.tsx  # Pull/Push buttons + confirmation
-│           └── SiteInfoCard.tsx  # Remote site info display
+│           ├── WPSyncPanel.tsx        # Main "WP Live Sync" tab
+│           ├── ConnectionForm.tsx     # Connection setup form
+│           ├── SyncControls.tsx       # Pull/Push buttons + confirmation
+│           ├── SiteInfoCard.tsx       # Remote site info display
+│           └── CreateFromLiveCard.tsx # Sidebar "Pull from Live Site" button + modal
+├── lib/                         # Compiled output (tsc + webpack), loaded by Local
 ├── companion-plugin/
 │   └── wp-sync-companion/       # WordPress plugin for live site
-│       ├── wp-sync-companion.php # Plugin entry
+│       ├── wp-sync-companion.php # Plugin entry, temp-dir setup, PHP limit overrides
 │       └── includes/
 │           ├── class-rest-controller.php  # REST API endpoints
 │           ├── class-database-handler.php # DB export/import
-│           └── class-file-handler.php     # File ZIP/extract
+│           └── class-file-handler.php     # File ZIP/extract, wp-config backup
 ├── package.json
 ├── tsconfig.json
 ├── webpack.config.js
@@ -149,29 +179,34 @@ yarn watch
 yarn build
 ```
 
-After building, restart Local WP to load changes (or use Local's add-on reload if available).
+`yarn build` runs `tsc` (main process → `lib/main`) and webpack (renderer → `lib/renderer`). It also runs automatically on `yarn install` (postinstall). After building, restart Local WP to load changes (or use Local's add-on reload if available).
 
 ## REST API Endpoints (Companion Plugin)
 
-All endpoints require administrator authentication via Application Passwords.
+All endpoints live under the `wp-sync/v1` namespace and require administrator authentication via Application Passwords.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/wp-json/wp-sync/v1/status` | Health check, plugin version |
+| GET | `/wp-json/wp-sync/v1/status` | Health check, plugin/WP/PHP versions |
 | GET | `/wp-json/wp-sync/v1/site-info` | WP version, theme, plugins, disk usage |
 | POST | `/wp-json/wp-sync/v1/export/database` | Trigger DB export, returns download token |
 | POST | `/wp-json/wp-sync/v1/export/files` | Trigger file archive, returns download token |
 | GET | `/wp-json/wp-sync/v1/download/{token}` | Download exported file |
-| POST | `/wp-json/wp-sync/v1/import/database` | Upload & import SQL file |
+| POST | `/wp-json/wp-sync/v1/import/database` | Upload & import SQL file (small files) |
+| POST | `/wp-json/wp-sync/v1/import/database/chunk` | Upload one 8 MB chunk of a large SQL file; imports once the last chunk arrives |
 | POST | `/wp-json/wp-sync/v1/import/files` | Upload & extract ZIP archive |
 | DELETE | `/wp-json/wp-sync/v1/cleanup/{token}` | Remove temporary files |
+
+The plugin also attempts to raise PHP limits (`upload_max_filesize`, `post_max_size`, `memory_limit`, `max_execution_time`) to 512M/600s via `ini_set` — hosts that disallow this fall back to the chunked upload path for databases.
 
 ## Limitations
 
 - Large sites (>1GB) may time out during export — consider increasing PHP `max_execution_time`
-- Files larger than 256MB are skipped during export
+- Individual files larger than 256MB are skipped during export to prevent memory issues
+- File archives are uploaded as a single request (15-minute timeout) — only database uploads are chunked
 - WordPress Multisite is detected but not fully tested
 - Serialized data URL rewriting on push relies on simple string replacement (works for most cases but may miss complex serialized structures)
+- Site creation from live currently provisions with Local's "preferred" environment defaults
 
 ## License
 
