@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: Live Sync Companion
- * Plugin URI:  https://github.com/24gb-uk/live-sync-companion
+ * Plugin URI:  https://github.com/rambozindia/live-sync-companion
  * Description: Companion plugin for the "WP Live Sync" add-on for Local. Exposes REST API endpoints for pulling/pushing your WordPress site.
  * Version:     1.2.0
  * Author:      Ramkumar R / 24GB
@@ -38,7 +38,7 @@ if (strpos($wplsync_request_uri, 'wp-sync/v1') !== false) {
     @ini_set('memory_limit',        '512M');
     @ini_set('max_execution_time',  '600');
     @ini_set('max_input_time',      '600');
-    // phpcs:enable
+    // phpcs:enable Squiz.PHP.DiscouragedFunctions.Discouraged
 }
 unset($wplsync_request_uri);
 

@@ -291,7 +291,7 @@ class WPLSync_REST_Controller {
         // compression must be off so Content-Length stays valid.
         @set_time_limit(0);
         @ini_set('zlib.output_compression', 'Off');
-        // phpcs:enable
+        // phpcs:enable Squiz.PHP.DiscouragedFunctions.Discouraged
         while (ob_get_level() > 0) {
             ob_end_clean();
         }

@@ -37,7 +37,7 @@ The plugin exposes REST API endpoints (under `wp-sync/v1`) for exporting and imp
 
 = Requirements =
 
-* The [WP Live Sync add-on](https://github.com/24gb-uk/local-addon-wp-sync) installed in Local on your computer
+* The [WP Live Sync add-on](https://github.com/rambozindia/local-addon-wp-sync) installed in Local on your computer
 * PHP ZipArchive extension on the server
 
 == Installation ==
