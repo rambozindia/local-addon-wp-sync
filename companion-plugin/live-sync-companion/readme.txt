@@ -1,18 +1,18 @@
-=== WP Sync Companion ===
+=== Live Sync Companion ===
 Contributors: rambozindia
 Tags: sync, migration, localwp, staging, deployment
 Requires at least: 5.6
-Tested up to: 6.8
+Tested up to: 7.0
 Requires PHP: 7.4
 Stable tag: 1.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Sync your live WordPress site with Local WP — pull your site into Local for development and push changes back, over the REST API. No SSH or FTP needed.
+Sync your live site with Local — pull it into Local for development and push changes back over the REST API. No SSH or FTP needed.
 
 == Description ==
 
-WP Sync Companion is the server-side half of **WP Live Sync**, a free add-on for [Local](https://localwp.com). Install this plugin on your live site, connect from the Local add-on with an Application Password, and you can:
+Live Sync Companion is the server-side half of **WP Live Sync**, a free add-on for [Local](https://localwp.com). Install this plugin on your live site, connect from the Local add-on with an Application Password, and you can:
 
 * **Pull** your entire live site (database + files) into a Local site
 * **Create a brand-new Local site** directly from your live site in one click
@@ -42,7 +42,7 @@ The plugin exposes REST API endpoints (under `wp-sync/v1`) for exporting and imp
 
 == Installation ==
 
-1. Upload the `wp-sync-companion` folder to `/wp-content/plugins/`, or install via Plugins → Add New
+1. Upload the `live-sync-companion` folder to `/wp-content/plugins/`, or install via Plugins → Add New
 2. Activate the plugin
 3. In WP Admin, go to **Users → Profile → Application Passwords**, create a password named e.g. "Local WP Sync" and copy it
 4. In Local, open the **WP Live Sync** panel, enter your site URL, username, and the Application Password, then connect
@@ -77,6 +77,7 @@ It is excluded from exports and preserved during imports — your live database 
 * Fixed: PHP 7.4 compatibility (removed PHP 8-only functions)
 * Changed: PHP limit overrides now apply only to this plugin's own REST requests
 * Changed: license to GPLv2 or later for WordPress.org distribution
+* Changed: plugin renamed from "WP Sync Companion" to "Live Sync Companion" (WordPress.org restricts "wp" in plugin names)
 
 = 1.1.2 =
 * Fixed: downloads stream in 1 MB chunks — no more memory exhaustion on large exports when output buffering is active

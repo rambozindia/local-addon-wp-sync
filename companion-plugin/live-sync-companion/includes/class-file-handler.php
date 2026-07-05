@@ -8,6 +8,10 @@
 
 defined('ABSPATH') || exit;
 
+// phpcs:disable WordPress.WP.AlternativeFunctions -- This handler zips/extracts entire
+// WordPress installations and fixes permissions on thousands of files. WP_Filesystem
+// cannot stream and adds per-call overhead, so direct PHP file operations are required.
+
 class WPLSync_File_Handler {
 
     /**
@@ -170,8 +174,8 @@ class WPLSync_File_Handler {
             ];
         }
 
-        @unlink($this->entries_path($token));
-        @unlink($this->state_path($token));
+        wp_delete_file($this->entries_path($token));
+        wp_delete_file($this->state_path($token));
 
         // Save download manifest covering all parts
         $download_manifest = [
@@ -269,7 +273,7 @@ class WPLSync_File_Handler {
             // Remove the sync manifest from the extracted files
             $manifest_path = $target_dir . '/.wp-sync-manifest.json';
             if (file_exists($manifest_path)) {
-                unlink($manifest_path);
+                wp_delete_file($manifest_path);
             }
 
             // Fix file permissions
@@ -409,7 +413,7 @@ class WPLSync_File_Handler {
             copy($latest_backup, $config);
             // Clean up old backups
             foreach ($backups as $backup) {
-                unlink($backup);
+                wp_delete_file($backup);
             }
         }
     }
@@ -447,7 +451,7 @@ class WPLSync_File_Handler {
             if ($item->isDir()) {
                 rmdir($item->getPathname());
             } else {
-                unlink($item->getPathname());
+                wp_delete_file($item->getPathname());
             }
         }
 

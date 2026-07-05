@@ -1,12 +1,16 @@
 <?php
 /**
- * REST API Controller for WP Sync Companion.
+ * REST API Controller for Live Sync Companion.
  *
  * Namespace: wp-sync/v1
  * All endpoints require administrator authentication (Application Passwords).
  */
 
 defined('ABSPATH') || exit;
+
+// phpcs:disable WordPress.WP.AlternativeFunctions -- This plugin streams multi-hundred-MB
+// export archives and assembles chunked uploads. WP_Filesystem buffers whole files in
+// memory and cannot stream or append, so direct PHP file operations are required.
 
 class WPLSync_REST_Controller {
 
@@ -282,8 +286,12 @@ class WPLSync_REST_Controller {
         // Stream the file in chunks. readfile() exhausts memory when output
         // buffering is active: the whole file accumulates in the buffer
         // instead of being flushed to the client.
+        // phpcs:disable Squiz.PHP.DiscouragedFunctions.Discouraged -- Streaming a
+        // multi-hundred-MB export must not be killed by max_execution_time, and
+        // compression must be off so Content-Length stays valid.
         @set_time_limit(0);
         @ini_set('zlib.output_compression', 'Off');
+        // phpcs:enable
         while (ob_get_level() > 0) {
             ob_end_clean();
         }
@@ -298,6 +306,7 @@ class WPLSync_REST_Controller {
         $handle = fopen($file_path, 'rb');
         if ($handle) {
             while (!feof($handle)) {
+                // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Raw binary file stream (Content-Type: application/octet-stream), not HTML output.
                 echo fread($handle, 1048576); // 1 MB per chunk
                 flush();
             }
@@ -397,7 +406,7 @@ class WPLSync_REST_Controller {
         if ($chunk_index + 1 >= $total_chunks) {
             $handler = new WPLSync_Database_Handler();
             $result  = $handler->import($assembled_path);
-            @unlink($assembled_path);
+            wp_delete_file($assembled_path);
 
             if (is_wp_error($result)) {
                 return new WP_REST_Response(['error' => $result->get_error_message()], 500);
@@ -461,21 +470,21 @@ class WPLSync_REST_Controller {
             if (!empty($manifest['parts'])) {
                 foreach ($manifest['parts'] as $part) {
                     if (!empty($part['path']) && file_exists($part['path'])) {
-                        unlink($part['path']);
+                        wp_delete_file($part['path']);
                     }
                 }
             }
             if (!empty($manifest['path']) && file_exists($manifest['path'])) {
-                unlink($manifest['path']);
+                wp_delete_file($manifest['path']);
             }
-            unlink($manifest_file);
+            wp_delete_file($manifest_file);
         }
 
         // Remove any leftover stepped-export state (aborted exports)
         foreach (['.state.json', '.entries.json'] as $suffix) {
             $stray = WPLSYNC_TEMP_DIR . '/' . $token . $suffix;
             if (file_exists($stray)) {
-                unlink($stray);
+                wp_delete_file($stray);
             }
         }
 

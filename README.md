@@ -24,7 +24,7 @@ Pull your self-hosted WordPress site into Local WP and push changes back to live
 **Two components work together:**
 
 1. **Local WP Add-on** (`local-addon-wp-sync`) — Runs inside Local WP, provides the UI and orchestrates sync
-2. **Companion Plugin** (`wp-sync-companion`) — Installed on your live WordPress site, exposes REST API endpoints for export/import
+2. **Companion Plugin** (`live-sync-companion`) — Installed on your live WordPress site, exposes REST API endpoints for export/import
 
 ### Pull Flow (Live → Local)
 1. Add-on repeatedly calls the companion plugin's export endpoints; each call does a bounded slice of work (dumping tables / zipping files) and returns progress, until the export is complete
@@ -58,14 +58,14 @@ Pull your self-hosted WordPress site into Local WP and push changes back to live
 
 ### 1. Install the Companion Plugin (Live Site)
 
-Upload the `companion-plugin/wp-sync-companion` folder to your live site:
+Upload the `companion-plugin/live-sync-companion` folder to your live site:
 
 ```bash
 # Via WP-CLI
-wp plugin install /path/to/wp-sync-companion --activate
+wp plugin install /path/to/live-sync-companion --activate
 
 # Or manually
-# Copy wp-sync-companion/ to wp-content/plugins/ and activate in WP Admin
+# Copy live-sync-companion/ to wp-content/plugins/ and activate in WP Admin
 ```
 
 ### 2. Create an Application Password (Live Site)
@@ -157,8 +157,8 @@ local-addon-wp-sync/
 │           └── CreateFromLiveCard.tsx # Sidebar "Pull from Live Site" button + modal
 ├── lib/                         # Compiled output (tsc + webpack), loaded by Local
 ├── companion-plugin/
-│   └── wp-sync-companion/       # WordPress plugin for live site
-│       ├── wp-sync-companion.php # Plugin entry, temp-dir setup, PHP limit overrides
+│   └── live-sync-companion/       # WordPress plugin for live site
+│       ├── live-sync-companion.php # Plugin entry, temp-dir setup, PHP limit overrides
 │       └── includes/
 │           ├── class-rest-controller.php  # REST API endpoints
 │           ├── class-database-handler.php # DB export/import

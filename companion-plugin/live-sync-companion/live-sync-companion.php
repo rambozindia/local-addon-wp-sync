@@ -1,14 +1,14 @@
 <?php
 /**
- * Plugin Name: WP Sync Companion
- * Plugin URI:  https://github.com/24gb-uk/wp-sync-companion
- * Description: Companion plugin for the Local WP "WP Live Sync" add-on. Exposes REST API endpoints for pulling/pushing your WordPress site.
+ * Plugin Name: Live Sync Companion
+ * Plugin URI:  https://github.com/24gb-uk/live-sync-companion
+ * Description: Companion plugin for the "WP Live Sync" add-on for Local. Exposes REST API endpoints for pulling/pushing your WordPress site.
  * Version:     1.2.0
  * Author:      Ramkumar R / 24GB
  * Author URI:  https://24gb.uk
  * License:     GPLv2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
- * Text Domain: wp-sync-companion
+ * Text Domain: live-sync-companion
  * Requires PHP: 7.4
  * Requires at least: 5.6
  *
@@ -26,13 +26,21 @@ define('WPLSYNC_TEMP_DIR', WP_CONTENT_DIR . '/wp-sync-temp');
  * Many shared hosts default to 8M-64M which is too small for database
  * exports. ini_set only works when the host allows it.
  */
-if (isset($_SERVER['REQUEST_URI']) && strpos($_SERVER['REQUEST_URI'], 'wp-sync/v1') !== false) {
+$wplsync_request_uri = isset($_SERVER['REQUEST_URI'])
+    ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI']))
+    : '';
+if (strpos($wplsync_request_uri, 'wp-sync/v1') !== false) {
+    // phpcs:disable Squiz.PHP.DiscouragedFunctions.Discouraged -- Large site
+    // exports/imports genuinely need higher limits; scoped to this plugin's
+    // own REST routes and silently ignored where the host forbids it.
     @ini_set('upload_max_filesize', '512M');
     @ini_set('post_max_size',       '512M');
     @ini_set('memory_limit',        '512M');
     @ini_set('max_execution_time',  '600');
     @ini_set('max_input_time',      '600');
+    // phpcs:enable
 }
+unset($wplsync_request_uri);
 
 /**
  * Create the temp directory (if needed) with access protections:

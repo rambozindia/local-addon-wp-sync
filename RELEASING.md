@@ -4,7 +4,7 @@ This project ships as two artifacts released to two communities:
 
 | Artifact | Audience | Channel |
 |----------|----------|---------|
-| `wp-sync-companion` (WordPress plugin) | Live WordPress sites | [WordPress.org Plugin Directory](https://wordpress.org/plugins/) |
+| `live-sync-companion` (WordPress plugin) | Live WordPress sites | [WordPress.org Plugin Directory](https://wordpress.org/plugins/) |
 | `local-addon-wp-sync` (Local add-on) | Local WP users | GitHub Releases + [Local Add-ons Library](https://localwp.com/add-ons/) |
 
 Keep the two version numbers in sync (`package.json` version ↔ plugin `Version:` header) — the plugin's stepped/chunked protocol is what the add-on speaks.
@@ -20,7 +20,7 @@ Keep the two version numbers in sync (`package.json` version ↔ plugin `Version
 
 ### Pre-submission checklist
 
-- [ ] Run the official [Plugin Check (PCP)](https://wordpress.org/plugins/plugin-check/) plugin against `wp-sync-companion` on a test site and fix anything it flags.
+- [ ] Run the official [Plugin Check (PCP)](https://wordpress.org/plugins/plugin-check/) plugin against `live-sync-companion` on a test site and fix anything it flags.
 - [ ] Verify on PHP 7.4 **and** 8.3 (the plugin declares `Requires PHP: 7.4`).
 - [ ] `Tested up to:` in `readme.txt` matches the current WordPress release.
 - [ ] `Stable tag:` matches the `Version:` header.
@@ -30,21 +30,21 @@ Keep the two version numbers in sync (`package.json` version ↔ plugin `Version
 
 1. Build the ZIP:
    ```bash
-   ./scripts/package-plugin.sh   # → dist/wp-sync-companion-<version>.zip
+   ./scripts/package-plugin.sh   # → dist/live-sync-companion-<version>.zip
    ```
 2. Upload it at <https://wordpress.org/plugins/developers/add/>.
 3. Wait for the review team (typically days to a few weeks). Because this plugin exposes database-export and file-import endpoints, expect security questions — the answers are in the readme: admin-only Application Password auth, token-validated downloads, path-traversal checks, protected temp dir, random filenames.
-4. The slug `wp-sync-companion` must be unique on WordPress.org; the review team may ask you to rename if it's taken (search the directory first).
+4. The slug `live-sync-companion` must be unique on WordPress.org; the review team may ask you to rename if it's taken (search the directory first).
 
 ### After approval — SVN
 
 WordPress.org gives you an SVN repository:
 
 ```bash
-svn co https://plugins.svn.wordpress.org/wp-sync-companion
-cd wp-sync-companion
+svn co https://plugins.svn.wordpress.org/live-sync-companion
+cd live-sync-companion
 # Copy plugin files into trunk/
-cp -R /path/to/companion-plugin/wp-sync-companion/* trunk/
+cp -R /path/to/companion-plugin/live-sync-companion/* trunk/
 svn add --force trunk
 svn ci -m "Release 1.2.0"
 # Tag the release (stable tag in readme.txt points here)
@@ -89,7 +89,7 @@ Users install either by:
 
 ## 3. Release checklist (every release)
 
-1. [ ] Bump version in `package.json` **and** `wp-sync-companion.php` (header + `WP_SYNC_VERSION`) **and** `readme.txt` (`Stable tag:` + changelog).
+1. [ ] Bump version in `package.json` **and** `live-sync-companion.php` (header + `WPLSYNC_VERSION`) **and** `readme.txt` (`Stable tag:` + changelog).
 2. [ ] `yarn build` and `php -l` all plugin files.
 3. [ ] Smoke test: pull a real site end-to-end (create-from-live), push a change back.
 4. [ ] Protocol compatibility: if REST endpoints changed, confirm the add-on still handles the previous plugin version gracefully (it detects old plugins by response shape).

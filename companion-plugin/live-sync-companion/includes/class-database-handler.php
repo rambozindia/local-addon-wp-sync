@@ -11,6 +11,14 @@
 
 defined('ABSPATH') || exit;
 
+// phpcs:disable WordPress.WP.AlternativeFunctions -- Database dumps are written line by
+// line and can be hundreds of MB. WP_Filesystem cannot stream or append, so direct PHP
+// file operations are required.
+// phpcs:disable WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Exporting
+// and importing entire tables requires schema-level queries (SHOW TABLES, SHOW CREATE TABLE,
+// full-table SELECTs). Table names come from SHOW TABLES on this site (not user input) and
+// are backtick-sanitized before interpolation; row limits/offsets use $wpdb->prepare().
+
 class WPLSync_Database_Handler {
 
     /** Max seconds of work per export step request. */
@@ -57,7 +65,7 @@ class WPLSync_Database_Handler {
                 return new WP_Error('export_failed', 'Cannot create export file');
             }
 
-            fwrite($handle, "-- WP Sync Companion Database Export\n");
+            fwrite($handle, "-- Live Sync Companion Database Export\n");
             fwrite($handle, "-- Generated: " . gmdate('Y-m-d H:i:s') . "\n");
             fwrite($handle, "-- WordPress: " . get_bloginfo('version') . "\n");
             fwrite($handle, "-- Site URL: " . home_url() . "\n\n");
@@ -105,7 +113,9 @@ class WPLSync_Database_Handler {
                 ];
             }
 
-            $table = $tables[$state['table_index']];
+            // Table names come from SHOW TABLES; strip backticks defensively
+            // before interpolating between backticks below.
+            $table = str_replace('`', '', $tables[$state['table_index']]);
 
             if ($state['offset'] === 0) {
                 fwrite($handle, "DROP TABLE IF EXISTS `{$table}`;\n");
@@ -144,7 +154,7 @@ class WPLSync_Database_Handler {
         fwrite($handle, "SET FOREIGN_KEY_CHECKS = 1;\n");
         fclose($handle);
 
-        @unlink($this->state_path($token));
+        wp_delete_file($this->state_path($token));
 
         // Save download manifest
         $manifest = [
