@@ -8,6 +8,7 @@ Pull your self-hosted WordPress site into Local WP and push changes back to live
 - **Push to Live** — deploy your local database + files back to the live server
 - **Create Site from Live** — one click in the Local sidebar provisions a brand-new Local site directly from a live WordPress install (no need to create an empty site first)
 - **Chunked database upload** — large SQL files are uploaded in 8 MB chunks, so pushes work even on shared hosting with restrictive PHP upload limits
+- **Stepped exports (proxy-safe)** — database and file exports on the live site run in short, resumable steps (~15s each), and file archives are split into ~100 MB parts, so pulls work behind Cloudflare and other proxies that time out long requests (HTTP 524)
 - **Automatic URL rewriting** — live ↔ local URLs are search-replaced on every pull/push
 - **Saved connections** — credentials are remembered per site, so reconnecting is instant
 
@@ -26,11 +27,10 @@ Pull your self-hosted WordPress site into Local WP and push changes back to live
 2. **Companion Plugin** (`wp-sync-companion`) — Installed on your live WordPress site, exposes REST API endpoints for export/import
 
 ### Pull Flow (Live → Local)
-1. Add-on sends a request to the companion plugin's REST API
-2. Companion plugin exports the database as SQL
-3. Companion plugin zips the WordPress files
-4. Add-on downloads both, extracts the files into the Local site, and imports the SQL directly through Local's bundled MySQL binary
-5. WP-CLI rewrites URLs from `https://yoursite.com` → `http://yoursite.local` (including the `https` variant)
+1. Add-on repeatedly calls the companion plugin's export endpoints; each call does a bounded slice of work (dumping tables / zipping files) and returns progress, until the export is complete
+2. The database is exported as a single SQL file; files are archived into one or more ~100 MB ZIP parts
+3. Add-on downloads the SQL file and each archive part, extracts the parts into the Local site, and imports the SQL directly through Local's bundled MySQL binary
+4. WP-CLI rewrites URLs from `https://yoursite.com` → `http://yoursite.local` (including the `https` variant)
 
 ### Push Flow (Local → Live)
 1. Add-on exports the local database via Local's bundled `mysqldump`
@@ -181,6 +181,15 @@ yarn build
 
 `yarn build` runs `tsc` (main process → `lib/main`) and webpack (renderer → `lib/renderer`). It also runs automatically on `yarn install` (postinstall). After building, restart Local WP to load changes (or use Local's add-on reload if available).
 
+### Releasing
+
+```bash
+./scripts/package-plugin.sh   # WordPress.org-ready ZIP → dist/
+./scripts/package-addon.sh    # Local add-on .tgz (prebuilt) → dist/
+```
+
+See [RELEASING.md](RELEASING.md) for the full WordPress.org submission and Local Add-ons Library listing process.
+
 ## REST API Endpoints (Companion Plugin)
 
 All endpoints live under the `wp-sync/v1` namespace and require administrator authentication via Application Passwords.
@@ -189,9 +198,9 @@ All endpoints live under the `wp-sync/v1` namespace and require administrator au
 |--------|----------|-------------|
 | GET | `/wp-json/wp-sync/v1/status` | Health check, plugin/WP/PHP versions |
 | GET | `/wp-json/wp-sync/v1/site-info` | WP version, theme, plugins, disk usage |
-| POST | `/wp-json/wp-sync/v1/export/database` | Trigger DB export, returns download token |
-| POST | `/wp-json/wp-sync/v1/export/files` | Trigger file archive, returns download token |
-| GET | `/wp-json/wp-sync/v1/download/{token}` | Download exported file |
+| POST | `/wp-json/wp-sync/v1/export/database` | DB export. With `stepped=1`, runs one ~15s slice per request — pass back `token` until `complete: true` |
+| POST | `/wp-json/wp-sync/v1/export/files` | File archive export. Same `stepped`/`token` protocol; produces ~100 MB ZIP parts |
+| GET | `/wp-json/wp-sync/v1/download/{token}` | Download exported file (`?part=N` for multi-part file exports) |
 | POST | `/wp-json/wp-sync/v1/import/database` | Upload & import SQL file (small files) |
 | POST | `/wp-json/wp-sync/v1/import/database/chunk` | Upload one 8 MB chunk of a large SQL file; imports once the last chunk arrives |
 | POST | `/wp-json/wp-sync/v1/import/files` | Upload & extract ZIP archive |
@@ -201,9 +210,8 @@ The plugin also attempts to raise PHP limits (`upload_max_filesize`, `post_max_s
 
 ## Limitations
 
-- Large sites (>1GB) may time out during export — consider increasing PHP `max_execution_time`
 - Individual files larger than 256MB are skipped during export to prevent memory issues
-- File archives are uploaded as a single request (15-minute timeout) — only database uploads are chunked
+- File archives are uploaded as a single request (15-minute timeout) — only database uploads are chunked, so **pushing** a very large site through Cloudflare may still hit its ~100s timeout (pulling is proxy-safe via stepped exports)
 - WordPress Multisite is detected but not fully tested
 - Serialized data URL rewriting on push relies on simple string replacement (works for most cases but may miss complex serialized structures)
 - Site creation from live currently provisions with Local's "preferred" environment defaults

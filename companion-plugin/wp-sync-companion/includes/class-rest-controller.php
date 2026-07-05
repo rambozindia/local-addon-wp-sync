@@ -8,7 +8,7 @@
 
 defined('ABSPATH') || exit;
 
-class WP_Sync_REST_Controller {
+class WPLSync_REST_Controller {
 
     const NAMESPACE = 'wp-sync/v1';
 
@@ -19,35 +19,35 @@ class WP_Sync_REST_Controller {
         // GET /status - Health check & plugin version
         register_rest_route(self::NAMESPACE, '/status', [
             'methods'             => 'GET',
-            'callback'            => [$this, 'get_status'],
+            'callback'            => $this->wrap([$this, 'get_status']),
             'permission_callback' => [$this, 'check_admin_permission'],
         ]);
 
         // GET /site-info - Detailed WordPress site information
         register_rest_route(self::NAMESPACE, '/site-info', [
             'methods'             => 'GET',
-            'callback'            => [$this, 'get_site_info'],
+            'callback'            => $this->wrap([$this, 'get_site_info']),
             'permission_callback' => [$this, 'check_admin_permission'],
         ]);
 
         // POST /export/database - Trigger database export
         register_rest_route(self::NAMESPACE, '/export/database', [
             'methods'             => 'POST',
-            'callback'            => [$this, 'export_database'],
+            'callback'            => $this->wrap([$this, 'export_database']),
             'permission_callback' => [$this, 'check_admin_permission'],
         ]);
 
         // POST /export/files - Trigger file archive export
         register_rest_route(self::NAMESPACE, '/export/files', [
             'methods'             => 'POST',
-            'callback'            => [$this, 'export_files'],
+            'callback'            => $this->wrap([$this, 'export_files']),
             'permission_callback' => [$this, 'check_admin_permission'],
         ]);
 
         // GET /download/{token} - Download exported file
         register_rest_route(self::NAMESPACE, '/download/(?P<token>[a-f0-9]+)', [
             'methods'             => 'GET',
-            'callback'            => [$this, 'download_file'],
+            'callback'            => $this->wrap([$this, 'download_file']),
             'permission_callback' => [$this, 'check_admin_permission'],
             'args'                => [
                 'token' => [
@@ -62,30 +62,73 @@ class WP_Sync_REST_Controller {
         // POST /import/database - Upload & import database
         register_rest_route(self::NAMESPACE, '/import/database', [
             'methods'             => 'POST',
-            'callback'            => [$this, 'import_database'],
+            'callback'            => $this->wrap([$this, 'import_database']),
             'permission_callback' => [$this, 'check_admin_permission'],
         ]);
 
         // POST /import/database/chunk - Upload a database chunk (for large files)
         register_rest_route(self::NAMESPACE, '/import/database/chunk', [
             'methods'             => 'POST',
-            'callback'            => [$this, 'import_database_chunk'],
+            'callback'            => $this->wrap([$this, 'import_database_chunk']),
             'permission_callback' => [$this, 'check_admin_permission'],
         ]);
 
         // POST /import/files - Upload & extract file archive
         register_rest_route(self::NAMESPACE, '/import/files', [
             'methods'             => 'POST',
-            'callback'            => [$this, 'import_files'],
+            'callback'            => $this->wrap([$this, 'import_files']),
             'permission_callback' => [$this, 'check_admin_permission'],
         ]);
 
         // DELETE /cleanup/{token} - Remove temporary export files
         register_rest_route(self::NAMESPACE, '/cleanup/(?P<token>[a-f0-9]+)', [
             'methods'             => 'DELETE',
-            'callback'            => [$this, 'cleanup'],
+            'callback'            => $this->wrap([$this, 'cleanup']),
             'permission_callback' => [$this, 'check_admin_permission'],
         ]);
+
+        // GET /log - Tail of the plugin's own log file (for remote debugging)
+        register_rest_route(self::NAMESPACE, '/log', [
+            'methods'             => 'GET',
+            'callback'            => $this->wrap([$this, 'get_log']),
+            'permission_callback' => [$this, 'check_admin_permission'],
+        ]);
+    }
+
+    /**
+     * Wrap an endpoint callback with logging and error trapping.
+     *
+     * Uncaught Throwables (including most PHP fatals) become structured JSON
+     * 500 responses — so the add-on can show the real error instead of a
+     * generic "Request failed with status code 500". Fatals that can't be
+     * caught (OOM, max_execution_time) are captured by a shutdown handler
+     * and end up in the log file.
+     */
+    private function wrap(callable $callback): callable {
+        return function (WP_REST_Request $request) use ($callback) {
+            $route = $request->get_method() . ' ' . $request->get_route();
+
+            register_shutdown_function(function () use ($route) {
+                $err = error_get_last();
+                if ($err && in_array($err['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+                    wplsync_log('fatal', $route . ' — ' . $err['message'] . ' in ' . $err['file'] . ':' . $err['line']);
+                }
+            });
+
+            wplsync_log('info', $route);
+
+            try {
+                $response = call_user_func($callback, $request);
+                if ($response instanceof WP_REST_Response && $response->get_status() >= 400) {
+                    wplsync_log('error', $route . ' -> HTTP ' . $response->get_status() . ' ' . wp_json_encode($response->get_data()));
+                }
+                return $response;
+            } catch (Throwable $e) {
+                $detail = get_class($e) . ': ' . $e->getMessage() . ' in ' . basename($e->getFile()) . ':' . $e->getLine();
+                wplsync_log('error', $route . ' threw ' . $detail);
+                return new WP_REST_Response(['error' => $detail], 500);
+            }
+        };
     }
 
     /**
@@ -105,7 +148,7 @@ class WP_Sync_REST_Controller {
     public function get_status(): WP_REST_Response {
         return new WP_REST_Response([
             'connected'      => true,
-            'pluginVersion'  => WP_SYNC_VERSION,
+            'pluginVersion'  => WPLSYNC_VERSION,
             'wpVersion'      => get_bloginfo('version'),
             'phpVersion'     => phpversion(),
         ]);
@@ -149,10 +192,24 @@ class WP_Sync_REST_Controller {
 
     /**
      * POST /export/database
+     *
+     * With `stepped=1`, runs one bounded slice of work per request (pass back
+     * the returned token until `complete` is true) so responses stay under
+     * proxy timeouts such as Cloudflare's ~100s limit. Without it, the export
+     * runs to completion in a single request (legacy behavior).
      */
     public function export_database(WP_REST_Request $request): WP_REST_Response {
-        $handler  = new WP_Sync_Database_Handler();
-        $result   = $handler->export();
+        $handler = new WPLSync_Database_Handler();
+
+        if ($request->get_param('stepped')) {
+            $token = $this->sanitize_token($request->get_param('token'));
+            if (is_wp_error($token)) {
+                return new WP_REST_Response(['error' => $token->get_error_message()], 400);
+            }
+            $result = $handler->export_step($token);
+        } else {
+            $result = $handler->export();
+        }
 
         if (is_wp_error($result)) {
             return new WP_REST_Response([
@@ -165,11 +222,24 @@ class WP_Sync_REST_Controller {
 
     /**
      * POST /export/files
+     *
+     * Supports the same `stepped` / `token` protocol as /export/database.
+     * Stepped exports produce multiple ZIP parts, downloadable via
+     * GET /download/{token}?part=N.
      */
     public function export_files(WP_REST_Request $request): WP_REST_Response {
         $scope   = $request->get_param('scope') ?: 'full';
-        $handler = new WP_Sync_File_Handler();
-        $result  = $handler->export($scope);
+        $handler = new WPLSync_File_Handler();
+
+        if ($request->get_param('stepped')) {
+            $token = $this->sanitize_token($request->get_param('token'));
+            if (is_wp_error($token)) {
+                return new WP_REST_Response(['error' => $token->get_error_message()], 400);
+            }
+            $result = $handler->export_step($scope, $token);
+        } else {
+            $result = $handler->export($scope);
+        }
 
         if (is_wp_error($result)) {
             return new WP_REST_Response([
@@ -185,26 +255,54 @@ class WP_Sync_REST_Controller {
      */
     public function download_file(WP_REST_Request $request) {
         $token = $request->get_param('token');
-        $manifest_file = WP_SYNC_TEMP_DIR . '/' . $token . '.json';
+        $manifest_file = WPLSYNC_TEMP_DIR . '/' . $token . '.json';
 
         if (!file_exists($manifest_file)) {
             return new WP_REST_Response(['error' => 'Invalid or expired token'], 404);
         }
 
         $manifest = json_decode(file_get_contents($manifest_file), true);
-        $file_path = $manifest['path'] ?? '';
+
+        if (!empty($manifest['parts'])) {
+            // Multi-part file export: ?part=N selects the archive part (default 0)
+            $part_index = (int) ($request->get_param('part') ?? 0);
+            $part = $manifest['parts'][$part_index] ?? null;
+            if (!$part) {
+                return new WP_REST_Response(['error' => 'Invalid part index: ' . $part_index], 404);
+            }
+            $file_path = $part['path'];
+        } else {
+            $file_path = $manifest['path'] ?? '';
+        }
 
         if (!file_exists($file_path)) {
             return new WP_REST_Response(['error' => 'Export file not found'], 404);
         }
 
-        // Stream the file
+        // Stream the file in chunks. readfile() exhausts memory when output
+        // buffering is active: the whole file accumulates in the buffer
+        // instead of being flushed to the client.
+        @set_time_limit(0);
+        @ini_set('zlib.output_compression', 'Off');
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+
+        wplsync_log('info', 'Streaming ' . filesize($file_path) . ' bytes: ' . basename($file_path));
+
         header('Content-Type: application/octet-stream');
         header('Content-Disposition: attachment; filename="' . basename($file_path) . '"');
         header('Content-Length: ' . filesize($file_path));
         header('Cache-Control: no-cache');
 
-        readfile($file_path);
+        $handle = fopen($file_path, 'rb');
+        if ($handle) {
+            while (!feof($handle)) {
+                echo fread($handle, 1048576); // 1 MB per chunk
+                flush();
+            }
+            fclose($handle);
+        }
         exit;
     }
 
@@ -229,7 +327,7 @@ class WP_Sync_REST_Controller {
             return new WP_REST_Response(['error' => $msg], 400);
         }
 
-        $handler = new WP_Sync_Database_Handler();
+        $handler = new WPLSync_Database_Handler();
         $result  = $handler->import($files['database']['tmp_name']);
 
         if (is_wp_error($result)) {
@@ -277,11 +375,9 @@ class WP_Sync_REST_Controller {
             return new WP_REST_Response(['error' => $err_map[$err_code] ?? 'Upload error: ' . $err_code], 400);
         }
 
-        if (!file_exists(WP_SYNC_TEMP_DIR)) {
-            wp_mkdir_p(WP_SYNC_TEMP_DIR);
-        }
+        wplsync_ensure_temp_dir();
 
-        $assembled_path = WP_SYNC_TEMP_DIR . '/chunk-' . $upload_id . '.sql';
+        $assembled_path = WPLSYNC_TEMP_DIR . '/chunk-' . $upload_id . '.sql';
 
         // Append this chunk to the assembled file
         $chunk_data = file_get_contents($files['chunk']['tmp_name']);
@@ -299,7 +395,7 @@ class WP_Sync_REST_Controller {
 
         // If this is the last chunk, import the assembled file
         if ($chunk_index + 1 >= $total_chunks) {
-            $handler = new WP_Sync_Database_Handler();
+            $handler = new WPLSync_Database_Handler();
             $result  = $handler->import($assembled_path);
             @unlink($assembled_path);
 
@@ -328,7 +424,7 @@ class WP_Sync_REST_Controller {
             return new WP_REST_Response(['error' => 'No file archive uploaded'], 400);
         }
 
-        $handler = new WP_Sync_File_Handler();
+        $handler = new WPLSync_File_Handler();
         $result  = $handler->import($files['files']['tmp_name'], $scope);
 
         if (is_wp_error($result)) {
@@ -341,18 +437,46 @@ class WP_Sync_REST_Controller {
     }
 
     /**
+     * GET /log — last 200 lines of the plugin log for remote debugging.
+     */
+    public function get_log(WP_REST_Request $request): WP_REST_Response {
+        $file = wplsync_log_path();
+        if (!file_exists($file)) {
+            return new WP_REST_Response(['log' => '']);
+        }
+        $lines = file($file);
+        $tail  = is_array($lines) ? array_slice($lines, -200) : [];
+        return new WP_REST_Response(['log' => implode('', $tail)]);
+    }
+
+    /**
      * DELETE /cleanup/{token}
      */
     public function cleanup(WP_REST_Request $request): WP_REST_Response {
         $token = $request->get_param('token');
-        $manifest_file = WP_SYNC_TEMP_DIR . '/' . $token . '.json';
+        $manifest_file = WPLSYNC_TEMP_DIR . '/' . $token . '.json';
 
         if (file_exists($manifest_file)) {
             $manifest = json_decode(file_get_contents($manifest_file), true);
+            if (!empty($manifest['parts'])) {
+                foreach ($manifest['parts'] as $part) {
+                    if (!empty($part['path']) && file_exists($part['path'])) {
+                        unlink($part['path']);
+                    }
+                }
+            }
             if (!empty($manifest['path']) && file_exists($manifest['path'])) {
                 unlink($manifest['path']);
             }
             unlink($manifest_file);
+        }
+
+        // Remove any leftover stepped-export state (aborted exports)
+        foreach (['.state.json', '.entries.json'] as $suffix) {
+            $stray = WPLSYNC_TEMP_DIR . '/' . $token . $suffix;
+            if (file_exists($stray)) {
+                unlink($stray);
+            }
         }
 
         return new WP_REST_Response(['cleaned' => true]);
@@ -361,6 +485,23 @@ class WP_Sync_REST_Controller {
     // ═══════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════
+
+    /**
+     * Validate an export token from a request body.
+     * Tokens are embedded in temp-dir file paths, so reject anything
+     * that isn't plain hex.
+     *
+     * @return string|null|WP_Error Null when no token was provided.
+     */
+    private function sanitize_token($token) {
+        if (empty($token)) {
+            return null;
+        }
+        if (!is_string($token) || !preg_match('/^[a-f0-9]{32,64}$/', $token)) {
+            return new WP_Error('invalid_token', 'Malformed export token');
+        }
+        return $token;
+    }
 
     private function calculate_disk_usage(): array {
         $uploads_dir = wp_upload_dir()['basedir'];

@@ -1,8 +1,9 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { execSync } from 'child_process';
-import { WPSyncApiClient } from './api-client';
+import { WPSyncApiClient, FilesExportResult } from './api-client';
 import { SiteConnection, SyncProgress, SyncResult, RemoteSiteInfo } from './types';
+import { wpSyncLog } from './logger';
 
 type ProgressCallback = (progress: SyncProgress) => void;
 
@@ -61,27 +62,34 @@ export class SyncManager {
     const client = new WPSyncApiClient(connection);
     const tempSiteId = `new-${Date.now()}`;
     const tempDir = this.getTempDir(tempSiteId);
+    onProgress = this.withLogging('create-from-live', onProgress);
+    wpSyncLog('info', `Create-from-live started: "${newSiteName}" from ${connection.siteUrl}`);
+    const exportTokens: string[] = [];
 
     try {
       fs.mkdirSync(tempDir, { recursive: true });
 
       // ── Stage 1: Export database on remote ──
-      onProgress({ stage: 'exporting-db', percent: 5, message: 'Requesting database export from live site...' });
-      const dbExport = await client.exportDatabase();
+      onProgress({ stage: 'exporting-db', percent: 5, message: 'Exporting database on live site...' });
+      const dbExport = await client.exportDatabase((p) =>
+        onProgress({ stage: 'exporting-db', percent: 8, message: `Exporting database on live site (${p})...` })
+      );
+      exportTokens.push(dbExport.token);
 
       // ── Stage 2: Download database ──
       onProgress({ stage: 'downloading-db', percent: 15, message: `Downloading database (${formatBytes(dbExport.size)})...` });
       const dbPath = path.join(tempDir, 'database.sql');
-      await this.downloadToFile(client, dbExport.token, dbPath);
+      await this.downloadToFile(client, dbExport.token, dbPath, undefined, dbExport.size);
 
       // ── Stage 3: Export files on remote ──
-      onProgress({ stage: 'exporting-files', percent: 25, message: 'Requesting file archive from live site...' });
-      const filesExport = await client.exportFiles('full');
+      onProgress({ stage: 'exporting-files', percent: 25, message: 'Archiving files on live site...' });
+      const filesExport = await client.exportFiles('full', (p) =>
+        onProgress({ stage: 'exporting-files', percent: 28, message: `Archiving files on live site (${p})...` })
+      );
+      exportTokens.push(filesExport.token);
 
-      // ── Stage 4: Download files ──
-      onProgress({ stage: 'downloading-files', percent: 40, message: `Downloading files (${formatBytes(filesExport.size)})...` });
-      const filesPath = path.join(tempDir, 'files.zip');
-      await this.downloadToFile(client, filesExport.token, filesPath);
+      // ── Stage 4: Download files (possibly multiple archive parts) ──
+      const partPaths = await this.downloadFileParts(client, filesExport, tempDir, onProgress, 40, 52);
 
       // ── Stage 5: Provision new Local site ──
       onProgress({ stage: 'creating-site', percent: 55, message: `Creating new Local site "${newSiteName}"...` });
@@ -93,7 +101,10 @@ export class SyncManager {
       if (fs.existsSync(sitePath)) {
         execSync(`chmod -R u+w "${sitePath}"`, { stdio: 'ignore' });
       }
-      const filesCount = await this.extractFiles(filesPath, sitePath);
+      let filesCount = 0;
+      for (const partPath of partPaths) {
+        filesCount += await this.extractFiles(partPath, sitePath);
+      }
 
       // ── Stage 7: Wait for MySQL and generate wp-config.php ──
       onProgress({ stage: 'importing-db', percent: 75, message: 'Waiting for MySQL to be ready...' });
@@ -139,6 +150,9 @@ export class SyncManager {
         newSiteId: newSite.id,
       };
     } catch (error: any) {
+      wpSyncLog('error', `Create-from-live failed: ${error.message}\n${error.stack || ''}`);
+      await this.captureRemoteLog(client);
+      await this.cleanupRemoteExports(client, exportTokens);
       onProgress({ stage: 'error', percent: 0, message: error.message });
       this.cleanupTemp(tempDir);
       throw error;
@@ -199,33 +213,43 @@ export class SyncManager {
     const client = new WPSyncApiClient(connection);
     const site = this.getLocalSite(siteId);
     const tempDir = this.getTempDir(siteId);
+    onProgress = this.withLogging(`pull ${siteId}`, onProgress);
+    wpSyncLog('info', `Pull started: site ${siteId} from ${connection.siteUrl}`);
+    const exportTokens: string[] = [];
 
     try {
       // Ensure temp directory exists
       fs.mkdirSync(tempDir, { recursive: true });
 
       // ── Stage 1: Export database on remote ──
-      onProgress({ stage: 'exporting-db', percent: 5, message: 'Requesting database export from live site...' });
-      const dbExport = await client.exportDatabase();
+      onProgress({ stage: 'exporting-db', percent: 5, message: 'Exporting database on live site...' });
+      const dbExport = await client.exportDatabase((p) =>
+        onProgress({ stage: 'exporting-db', percent: 8, message: `Exporting database on live site (${p})...` })
+      );
+      exportTokens.push(dbExport.token);
 
       // ── Stage 2: Download database ──
       onProgress({ stage: 'downloading-db', percent: 15, message: `Downloading database (${formatBytes(dbExport.size)})...` });
       const dbPath = path.join(tempDir, 'database.sql');
-      await this.downloadToFile(client, dbExport.token, dbPath);
+      await this.downloadToFile(client, dbExport.token, dbPath, undefined, dbExport.size);
 
       // ── Stage 3: Export files on remote ──
-      onProgress({ stage: 'exporting-files', percent: 25, message: 'Requesting file archive from live site...' });
-      const filesExport = await client.exportFiles('full');
+      onProgress({ stage: 'exporting-files', percent: 25, message: 'Archiving files on live site...' });
+      const filesExport = await client.exportFiles('full', (p) =>
+        onProgress({ stage: 'exporting-files', percent: 28, message: `Archiving files on live site (${p})...` })
+      );
+      exportTokens.push(filesExport.token);
 
-      // ── Stage 4: Download files ──
-      onProgress({ stage: 'downloading-files', percent: 35, message: `Downloading files (${formatBytes(filesExport.size)})...` });
-      const filesPath = path.join(tempDir, 'files.zip');
-      await this.downloadToFile(client, filesExport.token, filesPath);
+      // ── Stage 4: Download files (possibly multiple archive parts) ──
+      const partPaths = await this.downloadFileParts(client, filesExport, tempDir, onProgress, 35, 55);
 
       // ── Stage 5: Extract files into Local site ──
       onProgress({ stage: 'extracting-files', percent: 55, message: 'Extracting files into Local site...' });
       const sitePath = site.paths?.webRoot || site.path;
-      const filesCount = await this.extractFiles(filesPath, sitePath);
+      let filesCount = 0;
+      for (const partPath of partPaths) {
+        filesCount += await this.extractFiles(partPath, sitePath);
+      }
 
       // ── Stage 6: Import database ──
       onProgress({ stage: 'importing-db', percent: 75, message: 'Importing database via WP-CLI...' });
@@ -252,6 +276,9 @@ export class SyncManager {
         warnings,
       };
     } catch (error: any) {
+      wpSyncLog('error', `Pull failed: ${error.message}\n${error.stack || ''}`);
+      await this.captureRemoteLog(client);
+      await this.cleanupRemoteExports(client, exportTokens);
       onProgress({ stage: 'error', percent: 0, message: error.message });
       this.cleanupTemp(tempDir);
       throw error;
@@ -271,6 +298,8 @@ export class SyncManager {
     const client = new WPSyncApiClient(connection);
     const site = this.getLocalSite(siteId);
     const tempDir = this.getTempDir(siteId);
+    onProgress = this.withLogging(`push ${siteId}`, onProgress);
+    wpSyncLog('info', `Push started: site ${siteId} to ${connection.siteUrl}`);
 
     try {
       fs.mkdirSync(tempDir, { recursive: true });
@@ -313,6 +342,8 @@ export class SyncManager {
         warnings,
       };
     } catch (error: any) {
+      wpSyncLog('error', `Push failed: ${error.message}\n${error.stack || ''}`);
+      await this.captureRemoteLog(client);
       onProgress({ stage: 'error', percent: 0, message: error.message });
       this.cleanupTemp(tempDir);
       throw error;
@@ -322,6 +353,37 @@ export class SyncManager {
   // ═══════════════════════════════════════════════
   // Private helpers
   // ═══════════════════════════════════════════════
+
+  /**
+   * Wrap a progress callback so every stage update also lands in the log.
+   */
+  private withLogging(label: string, onProgress: ProgressCallback): ProgressCallback {
+    return (progress) => {
+      wpSyncLog('info', `[${label}] ${progress.stage} ${progress.percent}% — ${progress.message}`);
+      onProgress(progress);
+    };
+  }
+
+  /**
+   * After a failure, fetch the companion plugin's log tail so remote errors
+   * (including PHP fatals) are visible in the local wp-sync.log.
+   */
+  private async captureRemoteLog(client: WPSyncApiClient): Promise<void> {
+    const log = await client.getRemoteLog();
+    if (log) {
+      wpSyncLog('info', `--- remote companion plugin log (tail) ---\n${log}--- end remote log ---`);
+    }
+  }
+
+  /**
+   * Delete remote export files after a failed sync so aborted attempts don't
+   * accumulate large SQL/ZIP files in wp-sync-temp on the live server.
+   */
+  private async cleanupRemoteExports(client: WPSyncApiClient, tokens: string[]): Promise<void> {
+    for (const token of tokens) {
+      await client.cleanup(token).catch(() => {});
+    }
+  }
 
   private getLocalSite(siteId: string): any {
     const siteData = this.serviceContainer?.siteData;
@@ -355,16 +417,89 @@ export class SyncManager {
 
   /**
    * Download a file from the remote server using the export token.
+   * When expectedSize is provided, the file on disk is verified against it —
+   * a proxy or dying PHP worker can end the stream cleanly mid-transfer,
+   * which otherwise looks like a successful download (truncated SQL imports
+   * as an empty database). Retries up to 3 times on mismatch.
    */
-  private async downloadToFile(client: WPSyncApiClient, token: string, destPath: string): Promise<void> {
-    const response = await client.downloadDatabase(token);
-    const writer = fs.createWriteStream(destPath);
+  private async downloadToFile(
+    client: WPSyncApiClient,
+    token: string,
+    destPath: string,
+    part?: number,
+    expectedSize?: number
+  ): Promise<void> {
+    const MAX_ATTEMPTS = 3;
 
-    return new Promise((resolve, reject) => {
-      response.data.pipe(writer);
-      writer.on('finish', resolve);
-      writer.on('error', reject);
-    });
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const response = await client.download(token, part);
+      const writer = fs.createWriteStream(destPath);
+
+      await new Promise<void>((resolve, reject) => {
+        response.data.on('error', reject);
+        response.data.pipe(writer);
+        writer.on('finish', () => resolve());
+        writer.on('error', reject);
+      });
+
+      const actualSize = fs.statSync(destPath).size;
+      if (expectedSize === undefined || actualSize === expectedSize) {
+        wpSyncLog('info', `Downloaded ${destPath}: ${actualSize} bytes${part !== undefined ? ` (part ${part})` : ''}`);
+        return;
+      }
+
+      wpSyncLog(
+        'error',
+        `Download truncated (attempt ${attempt}/${MAX_ATTEMPTS}): got ${actualSize} of ${expectedSize} bytes for token ${token}${part !== undefined ? ` part ${part}` : ''}`
+      );
+    }
+
+    throw new Error(
+      `Download kept arriving truncated after ${MAX_ATTEMPTS} attempts (expected ${expectedSize} bytes). ` +
+      `The server is cutting large responses — make sure the wp-sync-companion plugin on the live site is v1.1.2+ ` +
+      `(chunked streaming) and check the hosting/proxy response limits.`
+    );
+  }
+
+  /**
+   * Download all parts of a file export into tempDir and return their paths.
+   * Companion plugin ≥1.1 splits file exports into ~100 MB ZIP parts; older
+   * plugins return a single archive (no `parts` field).
+   */
+  private async downloadFileParts(
+    client: WPSyncApiClient,
+    filesExport: FilesExportResult,
+    tempDir: string,
+    onProgress: ProgressCallback,
+    percentStart: number,
+    percentEnd: number
+  ): Promise<string[]> {
+    const partCount = filesExport.parts?.length ?? 0;
+
+    if (partCount === 0) {
+      onProgress({
+        stage: 'downloading-files',
+        percent: percentStart,
+        message: `Downloading files (${formatBytes(filesExport.size)})...`,
+      });
+      const singlePath = path.join(tempDir, 'files.zip');
+      await this.downloadToFile(client, filesExport.token, singlePath, undefined, filesExport.size);
+      return [singlePath];
+    }
+
+    const partPaths: string[] = [];
+    for (let i = 0; i < partCount; i++) {
+      const percent = Math.round(percentStart + ((percentEnd - percentStart) * i) / partCount);
+      onProgress({
+        stage: 'downloading-files',
+        percent,
+        message: `Downloading files (part ${i + 1}/${partCount}, ${formatBytes(filesExport.parts![i].size)})...`,
+      });
+      const partPath = path.join(tempDir, `files-part-${i}.zip`);
+      await this.downloadToFile(client, filesExport.token, partPath, i, filesExport.parts![i].size);
+      partPaths.push(partPath);
+    }
+    return partPaths;
   }
 
   /**
@@ -441,10 +576,18 @@ export class SyncManager {
 
   /**
    * Import a SQL file directly via Local's MySQL binary (bypasses WP-CLI).
+   * Verifies afterwards that tables actually exist — a truncated or empty
+   * SQL file otherwise imports "successfully" and only fails much later.
    */
   private async importDatabase(site: any, sqlPath: string): Promise<void> {
     const { spawn } = require('child_process');
     const { mysqlBin, socket, dbName, dbUser, dbPass } = this.getMysqlConfig(site);
+
+    const sqlSize = fs.existsSync(sqlPath) ? fs.statSync(sqlPath).size : 0;
+    wpSyncLog('info', `Importing database: ${sqlPath} (${sqlSize} bytes) into ${dbName}`);
+    if (sqlSize < 1024) {
+      throw new Error(`Database dump looks empty (${sqlSize} bytes) — aborting import.`);
+    }
 
     await new Promise<void>((resolve, reject) => {
       const child = spawn(mysqlBin, [`-u${dbUser}`, `-p${dbPass}`, `--socket=${socket}`, dbName]);
@@ -463,6 +606,42 @@ export class SyncManager {
       child.on('error', (err: Error) => reject(err));
 
       fs.createReadStream(sqlPath).pipe(child.stdin);
+    });
+
+    // Verify the import actually created tables
+    const tableCount = await this.countTables(site);
+    wpSyncLog('info', `Database import finished: ${tableCount} tables present`);
+    if (tableCount === 0) {
+      throw new Error('Database import completed but no tables exist — the SQL dump was likely truncated.');
+    }
+  }
+
+  /**
+   * Count tables in the site's database via Local's MySQL binary.
+   */
+  private async countTables(site: any): Promise<number> {
+    const { spawn } = require('child_process');
+    const { mysqlBin, socket, dbName, dbUser, dbPass } = this.getMysqlConfig(site);
+
+    return new Promise<number>((resolve, reject) => {
+      const child = spawn(mysqlBin, [
+        `-u${dbUser}`, `-p${dbPass}`, `--socket=${socket}`, '-N', '-e', 'SHOW TABLES', dbName,
+      ]);
+
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+      child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+
+      child.on('close', (code: number) => {
+        const realErrors = stderr.split('\n').filter((l: string) => !this.isMysqlWarning(l));
+        if (code !== 0 && realErrors.length > 0) {
+          reject(new Error(realErrors.join('\n')));
+        } else {
+          resolve(stdout.split('\n').filter((l) => l.trim() !== '').length);
+        }
+      });
+      child.on('error', (err: Error) => reject(err));
     });
   }
 
