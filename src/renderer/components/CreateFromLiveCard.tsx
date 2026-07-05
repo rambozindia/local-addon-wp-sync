@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { IPC_EVENTS } from '../../main/ipc-events';
+import { ErrorBox } from './ErrorBox';
 import '../styles.css';
 
 const { ipcRenderer } = require('electron');
@@ -246,10 +247,7 @@ export const CreateFromLiveCard: React.FC = () => {
 
             {step === 'error' && (
               <div className="wps-cfl-result">
-                <div className="wps-error wps-cfl-error-box">
-                  <span className="wps-error-icon">⚠</span>
-                  <span>{errorMsg}</span>
-                </div>
+                <ErrorBox message={errorMsg} className="wps-cfl-error-box" />
                 <div className="wps-cfl-actions">
                   <button className="wps-btn wps-btn-secondary" onClick={() => setStep('form')}>
                     Try Again

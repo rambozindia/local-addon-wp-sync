@@ -69,6 +69,10 @@ export class SyncManager {
     try {
       fs.mkdirSync(tempDir, { recursive: true });
 
+      // The live site may use a custom table prefix (e.g. c_ instead of wp_);
+      // the generated wp-config.php must match the imported tables.
+      const dbPrefix = await this.getRemoteDbPrefix(client);
+
       // ── Stage 1: Export database on remote ──
       onProgress({ stage: 'exporting-db', percent: 5, message: 'Exporting database on live site...' });
       const dbExport = await client.exportDatabase((p) =>
@@ -120,6 +124,7 @@ export class SyncManager {
         `--dbuser=${dbUser}`,
         `--dbpass=${dbPass}`,
         '--dbhost=localhost',
+        `--dbprefix=${dbPrefix}`,
         '--skip-check',
         '--force',
       ]);
@@ -252,8 +257,13 @@ export class SyncManager {
       }
 
       // ── Stage 6: Import database ──
-      onProgress({ stage: 'importing-db', percent: 75, message: 'Importing database via WP-CLI...' });
+      onProgress({ stage: 'importing-db', percent: 75, message: 'Importing database...' });
       await this.importDatabase(site, dbPath);
+
+      // Align the local wp-config.php table prefix with the imported tables
+      // (the live site may use a custom prefix like c_ instead of wp_).
+      const dbPrefix = await this.getRemoteDbPrefix(client);
+      await this.runWpCli(site, ['config', 'set', 'table_prefix', dbPrefix]);
 
       // ── Stage 7: Search-replace URLs ──
       onProgress({ stage: 'rewriting-urls', percent: 85, message: 'Rewriting URLs for local environment...' });
@@ -373,6 +383,26 @@ export class SyncManager {
     if (log) {
       wpSyncLog('info', `--- remote companion plugin log (tail) ---\n${log}--- end remote log ---`);
     }
+  }
+
+  /**
+   * Fetch the live site's database table prefix (e.g. wp_ or c_) so the
+   * local wp-config.php can be made to match the imported tables.
+   * Falls back to wp_ if the prefix can't be determined or looks unsafe.
+   */
+  private async getRemoteDbPrefix(client: WPSyncApiClient): Promise<string> {
+    try {
+      const info = await client.getSiteInfo();
+      const prefix = info?.dbPrefix || 'wp_';
+      if (/^[A-Za-z0-9_]+$/.test(prefix)) {
+        wpSyncLog('info', `Remote table prefix: ${prefix}`);
+        return prefix;
+      }
+      wpSyncLog('error', `Remote table prefix looks unsafe (${prefix}), falling back to wp_`);
+    } catch (err: any) {
+      wpSyncLog('error', `Could not fetch remote site info for table prefix: ${err.message}`);
+    }
+    return 'wp_';
   }
 
   /**

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { ConnectionForm } from './ConnectionForm';
 import { SyncControls } from './SyncControls';
 import { SiteInfoCard } from './SiteInfoCard';
+import { ErrorBox } from './ErrorBox';
 import { IPC_EVENTS } from '../../main/ipc-events';
 import '../styles.css';
 
@@ -184,13 +185,7 @@ export const WPSyncPanel: React.FC<Props> = ({ site }) => {
         </div>
       </div>
 
-      {error && (
-        <div className="wps-error">
-          <span className="wps-error-icon">⚠</span>
-          <span>{error}</span>
-          <button className="wps-error-dismiss" onClick={() => setError(null)}>×</button>
-        </div>
-      )}
+      {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
 
       {view === 'connect' && (
         <ConnectionForm onConnect={handleConnect} />
