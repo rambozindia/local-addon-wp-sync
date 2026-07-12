@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# Package the Live Sync Companion plugin into a WordPress.org-ready ZIP.
+# Package the BlueBurn Live Sync plugin into a WordPress.org-ready ZIP.
 # Usage: ./scripts/package-plugin.sh
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-VERSION=$(grep -m1 "Version:" companion-plugin/live-sync-companion/live-sync-companion.php | sed 's/[^0-9.]//g')
-OUT="dist/live-sync-companion-${VERSION}.zip"
+VERSION=$(grep -m1 "Version:" companion-plugin/blueburn-live-sync/blueburn-live-sync.php | sed 's/[^0-9.]//g')
+OUT="dist/blueburn-live-sync-${VERSION}.zip"
 
 mkdir -p dist
 rm -f "$OUT"
 
-# Zip from inside companion-plugin so the archive root is live-sync-companion/
+# Zip from inside companion-plugin so the archive root is blueburn-live-sync/
 (
   cd companion-plugin
-  zip -r "../$OUT" live-sync-companion \
+  zip -r "../$OUT" blueburn-live-sync \
     -x "*.DS_Store" -x "*__MACOSX*" -x "*.git*"
 )
 

@@ -1,12 +1,15 @@
 <?php
 /**
- * Uninstall handler for Live Sync Companion.
- * Removes the temp directory (exports, logs, step state) entirely.
+ * Uninstall handler for BlueBurn Live Sync for Local.
+ * Removes the temp directory (exports, logs, step state) and plugin options.
  */
 
 defined('WP_UNINSTALL_PLUGIN') || exit;
 
-$wplsync_temp_dir = WP_CONTENT_DIR . '/wp-sync-temp';
+delete_option('wplsync_log_key');
+
+$wplsync_upload   = wp_upload_dir(null, false);
+$wplsync_temp_dir = rtrim($wplsync_upload['basedir'], '/\\') . '/blueburn-live-sync';
 
 if (is_dir($wplsync_temp_dir)) {
     $wplsync_iterator = new RecursiveIteratorIterator(

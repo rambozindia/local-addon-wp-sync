@@ -58,14 +58,14 @@ class WPLSync_Database_Handler {
             // .htaccess (nginx), a date-based name would be guessable and the
             // whole database dump publicly downloadable.
             $filename = 'db-export-' . $token . '.sql';
-            $filepath = WPLSYNC_TEMP_DIR . '/' . $filename;
+            $filepath = wplsync_temp_dir() . '/' . $filename;
 
             $handle = fopen($filepath, 'w');
             if (!$handle) {
                 return new WP_Error('export_failed', 'Cannot create export file');
             }
 
-            fwrite($handle, "-- Live Sync Companion Database Export\n");
+            fwrite($handle, "-- BlueBurn Live Sync Database Export\n");
             fwrite($handle, "-- Generated: " . gmdate('Y-m-d H:i:s') . "\n");
             fwrite($handle, "-- WordPress: " . get_bloginfo('version') . "\n");
             fwrite($handle, "-- Site URL: " . home_url() . "\n\n");
@@ -164,7 +164,7 @@ class WPLSync_Database_Handler {
             'created'  => time(),
             'type'     => 'database',
         ];
-        file_put_contents(WPLSYNC_TEMP_DIR . '/' . $token . '.json', json_encode($manifest));
+        file_put_contents(wplsync_temp_dir() . '/' . $token . '.json', json_encode($manifest));
 
         wplsync_log('info', 'DB export complete: ' . filesize($state['path']) . ' bytes, token ' . $token);
 
@@ -179,7 +179,7 @@ class WPLSync_Database_Handler {
     // ─── Step state persistence ───
 
     private function state_path(string $token): string {
-        return WPLSYNC_TEMP_DIR . '/' . $token . '.state.json';
+        return wplsync_temp_dir() . '/' . $token . '.state.json';
     }
 
     private function load_state(string $token): ?array {

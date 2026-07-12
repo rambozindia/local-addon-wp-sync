@@ -1,6 +1,6 @@
 <?php
 /**
- * REST API Controller for Live Sync Companion.
+ * REST API Controller for BlueBurn Live Sync for Local.
  *
  * Namespace: wp-sync/v1
  * All endpoints require administrator authentication (Application Passwords).
@@ -203,6 +203,7 @@ class WPLSync_REST_Controller {
      * runs to completion in a single request (legacy behavior).
      */
     public function export_database(WP_REST_Request $request): WP_REST_Response {
+        wplsync_raise_limits();
         $handler = new WPLSync_Database_Handler();
 
         if ($request->get_param('stepped')) {
@@ -232,6 +233,7 @@ class WPLSync_REST_Controller {
      * GET /download/{token}?part=N.
      */
     public function export_files(WP_REST_Request $request): WP_REST_Response {
+        wplsync_raise_limits();
         $scope   = $request->get_param('scope') ?: 'full';
         $handler = new WPLSync_File_Handler();
 
@@ -258,8 +260,9 @@ class WPLSync_REST_Controller {
      * GET /download/{token}
      */
     public function download_file(WP_REST_Request $request) {
+        wplsync_raise_limits();
         $token = $request->get_param('token');
-        $manifest_file = WPLSYNC_TEMP_DIR . '/' . $token . '.json';
+        $manifest_file = wplsync_temp_dir() . '/' . $token . '.json';
 
         if (!file_exists($manifest_file)) {
             return new WP_REST_Response(['error' => 'Invalid or expired token'], 404);
@@ -319,6 +322,7 @@ class WPLSync_REST_Controller {
      * POST /import/database
      */
     public function import_database(WP_REST_Request $request): WP_REST_Response {
+        wplsync_raise_limits();
         $files = $request->get_file_params();
 
         if (empty($files['database']) || !isset($files['database']['tmp_name'])) {
@@ -362,6 +366,7 @@ class WPLSync_REST_Controller {
      *   chunk        - file, the raw chunk data
      */
     public function import_database_chunk(WP_REST_Request $request): WP_REST_Response {
+        wplsync_raise_limits();
         $upload_id    = sanitize_key($request->get_param('upload_id'));
         $chunk_index  = (int) $request->get_param('chunk_index');
         $total_chunks = (int) $request->get_param('total_chunks');
@@ -386,7 +391,7 @@ class WPLSync_REST_Controller {
 
         wplsync_ensure_temp_dir();
 
-        $assembled_path = WPLSYNC_TEMP_DIR . '/chunk-' . $upload_id . '.sql';
+        $assembled_path = wplsync_temp_dir() . '/chunk-' . $upload_id . '.sql';
 
         // Append this chunk to the assembled file
         $chunk_data = file_get_contents($files['chunk']['tmp_name']);
@@ -426,6 +431,7 @@ class WPLSync_REST_Controller {
      * POST /import/files
      */
     public function import_files(WP_REST_Request $request): WP_REST_Response {
+        wplsync_raise_limits();
         $files = $request->get_file_params();
         $scope = $request->get_param('scope') ?: 'full';
 
@@ -463,7 +469,7 @@ class WPLSync_REST_Controller {
      */
     public function cleanup(WP_REST_Request $request): WP_REST_Response {
         $token = $request->get_param('token');
-        $manifest_file = WPLSYNC_TEMP_DIR . '/' . $token . '.json';
+        $manifest_file = wplsync_temp_dir() . '/' . $token . '.json';
 
         if (file_exists($manifest_file)) {
             $manifest = json_decode(file_get_contents($manifest_file), true);
@@ -482,7 +488,7 @@ class WPLSync_REST_Controller {
 
         // Remove any leftover stepped-export state (aborted exports)
         foreach (['.state.json', '.entries.json'] as $suffix) {
-            $stray = WPLSYNC_TEMP_DIR . '/' . $token . $suffix;
+            $stray = wplsync_temp_dir() . '/' . $token . $suffix;
             if (file_exists($stray)) {
                 wp_delete_file($stray);
             }

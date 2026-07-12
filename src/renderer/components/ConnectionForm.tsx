@@ -38,7 +38,7 @@ export const ConnectionForm: React.FC<Props> = ({ onConnect }) => {
       <div className="wps-info-banner">
         <p>
           <strong>Requirements:</strong> Install the{' '}
-          <em>WP Sync Companion</em> plugin on your live WordPress site and
+          <em>BlueBurn Live Sync</em> plugin on your live WordPress site and
           create an <strong>Application Password</strong> under
           Users → Your Profile.
         </p>

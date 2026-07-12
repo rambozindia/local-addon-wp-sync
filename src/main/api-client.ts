@@ -18,7 +18,7 @@ export interface FilesExportResult {
 }
 
 /**
- * REST API client for the WP Sync Companion plugin.
+ * REST API client for the BlueBurn Live Sync companion plugin.
  * Communicates with the live WordPress site's custom REST endpoints.
  */
 export class WPSyncApiClient {

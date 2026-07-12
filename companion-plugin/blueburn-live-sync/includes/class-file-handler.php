@@ -22,7 +22,17 @@ class WPLSync_File_Handler {
         '.svn',
         'node_modules',
         '.DS_Store',
-        'wp-sync-temp',
+        'wp-sync-temp', // legacy temp dir from pre-1.3 versions
+    ];
+
+    /**
+     * Files to always exclude from exports. These carry host-specific PHP
+     * config (open_basedir etc.) that breaks the site when moved to a
+     * different server or a local environment.
+     */
+    const EXCLUDED_FILES = [
+        '.user.ini',
+        '.DS_Store',
     ];
 
     /** Max seconds of add-work per export step request (zip compression on close adds more). */
@@ -99,7 +109,7 @@ class WPLSync_File_Handler {
 
         $part_index    = count($state['parts']);
         $part_filename = sprintf('files-export-%s-%s-part%03d.zip', $state['scope'], $token, $part_index);
-        $part_path     = WPLSYNC_TEMP_DIR . '/' . $part_filename;
+        $part_path     = wplsync_temp_dir() . '/' . $part_filename;
 
         $zip    = new ZipArchive();
         $result = $zip->open($part_path, ZipArchive::CREATE | ZipArchive::OVERWRITE);
@@ -184,7 +194,7 @@ class WPLSync_File_Handler {
             'created' => time(),
             'parts'   => $state['parts'],
         ];
-        file_put_contents(WPLSYNC_TEMP_DIR . '/' . $token . '.json', json_encode($download_manifest));
+        file_put_contents(wplsync_temp_dir() . '/' . $token . '.json', json_encode($download_manifest));
 
         $public_parts = array_map(function ($p) {
             return ['filename' => $p['filename'], 'size' => $p['size']];
@@ -203,11 +213,11 @@ class WPLSync_File_Handler {
     // ─── Step state persistence ───
 
     private function state_path(string $token): string {
-        return WPLSYNC_TEMP_DIR . '/' . $token . '.state.json';
+        return wplsync_temp_dir() . '/' . $token . '.state.json';
     }
 
     private function entries_path(string $token): string {
-        return WPLSYNC_TEMP_DIR . '/' . $token . '.entries.json';
+        return wplsync_temp_dir() . '/' . $token . '.entries.json';
     }
 
     private function load_state(string $token): ?array {
@@ -259,16 +269,18 @@ class WPLSync_File_Handler {
                 return $validation;
             }
 
-            // Create backup of critical files before overwriting
-            $this->backup_wp_config($target_dir);
-
-            // Extract files
-            $zip->extractTo($target_dir);
+            // Extract everything except wp-config.php: the site's own config
+            // (database credentials, auth keys/salts) must never be touched,
+            // and copying it anywhere as a backup would duplicate secrets.
+            $entries = [];
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $name = $zip->getNameIndex($i);
+                if ($name !== 'wp-config.php') {
+                    $entries[] = $name;
+                }
+            }
+            $zip->extractTo($target_dir, $entries);
             $zip->close();
-
-            // Restore wp-config.php if this is a full import
-            // (we never want to overwrite the local wp-config.php)
-            $this->restore_wp_config($target_dir);
 
             // Remove the sync manifest from the extracted files
             $manifest_path = $target_dir . '/.wp-sync-manifest.json';
@@ -340,8 +352,13 @@ class WPLSync_File_Handler {
                 continue;
             }
 
+            // Skip host-specific config files (any depth)
+            if ($item->isFile() && in_array($filename, self::EXCLUDED_FILES, true)) {
+                continue;
+            }
+
             // Skip our own temp directory
-            if ($full_path === WPLSYNC_TEMP_DIR) {
+            if ($full_path === wplsync_temp_dir()) {
                 continue;
             }
 
@@ -379,43 +396,6 @@ class WPLSync_File_Handler {
         }
 
         return true;
-    }
-
-    /**
-     * Backup wp-config.php before a full import.
-     */
-    private function backup_wp_config(string $dir): void {
-        $config = $dir . '/wp-config.php';
-        $backup = WPLSYNC_TEMP_DIR . '/wp-config-backup-' . time() . '.php';
-
-        if (file_exists($config)) {
-            copy($config, $backup);
-        }
-    }
-
-    /**
-     * Restore wp-config.php after a full import.
-     */
-    private function restore_wp_config(string $dir): void {
-        // Find the most recent backup
-        $backups = glob(WPLSYNC_TEMP_DIR . '/wp-config-backup-*.php');
-        if (empty($backups)) return;
-
-        // Sort by modification time (newest first)
-        usort($backups, function ($a, $b) {
-            return filemtime($b) - filemtime($a);
-        });
-
-        $latest_backup = $backups[0];
-        $config = $dir . '/wp-config.php';
-
-        if (file_exists($latest_backup)) {
-            copy($latest_backup, $config);
-            // Clean up old backups
-            foreach ($backups as $backup) {
-                wp_delete_file($backup);
-            }
-        }
     }
 
     /**

@@ -156,7 +156,7 @@ export const CreateFromLiveCard: React.FC = () => {
                 <p className="wps-cfl-subtitle">
                   Creates a brand-new Local site by downloading a live WordPress
                   site's files and database. Requires the{' '}
-                  <em>WP Sync Companion</em> plugin on your live site.
+                  <em>BlueBurn Live Sync</em> plugin on your live site.
                 </p>
 
                 <div className="wps-field">

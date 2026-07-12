@@ -136,7 +136,7 @@ export class SyncManager {
       // ── Stage 8: Search-replace URLs ──
       onProgress({ stage: 'rewriting-urls', percent: 88, message: 'Rewriting URLs for local environment...' });
       const localUrl = this.getLocalSiteUrl(newSite);
-      await this.searchReplaceUrls(newSite, connection.siteUrl, localUrl);
+      await this.rewriteImportedUrls(newSite, connection.siteUrl, localUrl, dbPrefix);
 
       // ── Stage 9: Cleanup ──
       onProgress({ stage: 'cleanup', percent: 95, message: 'Cleaning up temporary files...' });
@@ -223,6 +223,11 @@ export class SyncManager {
     const exportTokens: string[] = [];
 
     try {
+      // Fail fast if the Local site isn't running — otherwise we'd download
+      // hundreds of MB and only then fail at the database import.
+      onProgress({ stage: 'connecting', percent: 2, message: 'Checking the Local site is running...' });
+      await this.ensureSiteRunning(site);
+
       // Ensure temp directory exists
       fs.mkdirSync(tempDir, { recursive: true });
 
@@ -268,7 +273,7 @@ export class SyncManager {
       // ── Stage 7: Search-replace URLs ──
       onProgress({ stage: 'rewriting-urls', percent: 85, message: 'Rewriting URLs for local environment...' });
       const localUrl = this.getLocalSiteUrl(site);
-      await this.searchReplaceUrls(site, connection.siteUrl, localUrl);
+      await this.rewriteImportedUrls(site, connection.siteUrl, localUrl, dbPrefix);
 
       // ── Stage 8: Cleanup ──
       onProgress({ stage: 'cleanup', percent: 95, message: 'Cleaning up temporary files...' });
@@ -312,6 +317,10 @@ export class SyncManager {
     wpSyncLog('info', `Push started: site ${siteId} to ${connection.siteUrl}`);
 
     try {
+      // The local database export needs the site's MySQL to be running
+      onProgress({ stage: 'connecting', percent: 2, message: 'Checking the Local site is running...' });
+      await this.ensureSiteRunning(site);
+
       fs.mkdirSync(tempDir, { recursive: true });
 
       // ── Stage 1: Export local database ──
@@ -486,7 +495,7 @@ export class SyncManager {
 
     throw new Error(
       `Download kept arriving truncated after ${MAX_ATTEMPTS} attempts (expected ${expectedSize} bytes). ` +
-      `The server is cutting large responses — make sure the wp-sync-companion plugin on the live site is v1.1.2+ ` +
+      `The server is cutting large responses — make sure the BlueBurn Live Sync plugin on the live site is v1.1.2+ ` +
       `(chunked streaming) and check the hosting/proxy response limits.`
     );
   }
@@ -543,7 +552,11 @@ export class SyncManager {
       execSync(`chmod -R u+w "${destPath}"`, { stdio: 'ignore' });
     }
 
-    const files = await decompress(zipPath, destPath);
+    const files = await decompress(zipPath, destPath, {
+      // Never extract host-specific PHP config (open_basedir etc.) — a live
+      // server's .user.ini breaks PHP-FPM locally ("No input file specified").
+      filter: (file: any) => path.basename(file.path) !== '.user.ini',
+    });
     return files.length;
   }
 
@@ -647,15 +660,16 @@ export class SyncManager {
   }
 
   /**
-   * Count tables in the site's database via Local's MySQL binary.
+   * Run a SQL query against the site's database via Local's MySQL binary.
+   * Returns non-empty output lines (tab-separated columns).
    */
-  private async countTables(site: any): Promise<number> {
+  private async queryMysql(site: any, sql: string): Promise<string[]> {
     const { spawn } = require('child_process');
     const { mysqlBin, socket, dbName, dbUser, dbPass } = this.getMysqlConfig(site);
 
-    return new Promise<number>((resolve, reject) => {
+    return new Promise<string[]>((resolve, reject) => {
       const child = spawn(mysqlBin, [
-        `-u${dbUser}`, `-p${dbPass}`, `--socket=${socket}`, '-N', '-e', 'SHOW TABLES', dbName,
+        `-u${dbUser}`, `-p${dbPass}`, `--socket=${socket}`, '-N', '-e', sql, dbName,
       ]);
 
       let stdout = '';
@@ -668,11 +682,41 @@ export class SyncManager {
         if (code !== 0 && realErrors.length > 0) {
           reject(new Error(realErrors.join('\n')));
         } else {
-          resolve(stdout.split('\n').filter((l) => l.trim() !== '').length);
+          resolve(stdout.split('\n').filter((l) => l.trim() !== ''));
         }
       });
       child.on('error', (err: Error) => reject(err));
     });
+  }
+
+  /**
+   * Count tables in the site's database via Local's MySQL binary.
+   */
+  private async countTables(site: any): Promise<number> {
+    const rows = await this.queryMysql(site, 'SHOW TABLES');
+    return rows.length;
+  }
+
+  /**
+   * Read the canonical URLs (siteurl/home) from the imported database.
+   * The live site's canonical domain can differ from the URL used to connect
+   * (domain aliases, recent moves) — every one of them must be rewritten or
+   * the local site keeps redirecting to the live domain.
+   */
+  private async getImportedSiteUrls(site: any, dbPrefix: string): Promise<string[]> {
+    try {
+      const rows = await this.queryMysql(
+        site,
+        `SELECT option_value FROM \`${dbPrefix}options\` WHERE option_name IN ('siteurl', 'home')`
+      );
+      const origins = rows
+        .map((r) => r.trim().replace(/\/+$/, ''))
+        .filter((r) => /^https?:\/\//.test(r));
+      return Array.from(new Set(origins));
+    } catch (err: any) {
+      wpSyncLog('error', `Could not read siteurl/home from imported database: ${err.message}`);
+      return [];
+    }
   }
 
   /**
@@ -705,18 +749,81 @@ export class SyncManager {
   }
 
   /**
-   * Run WP-CLI search-replace to rewrite URLs using Local's WpCliService.
+   * Run WP-CLI search-replace to rewrite a URL (both http and https variants)
+   * using Local's WpCliService.
    */
   private async searchReplaceUrls(site: any, fromUrl: string, toUrl: string): Promise<void> {
-    const from = fromUrl.replace(/\/+$/, '');
     const to = toUrl.replace(/\/+$/, '');
+    const bareFrom = fromUrl.replace(/\/+$/, '').replace(/^https?:\/\//, '');
 
-    await this.runWpCli(site, ['search-replace', from, to, '--all-tables']);
+    for (const variant of [`https://${bareFrom}`, `http://${bareFrom}`]) {
+      if (variant === to) continue;
+      await this.runWpCli(site, ['search-replace', variant, to, '--all-tables']);
+    }
+  }
 
-    // Also handle https↔http variants
-    const fromHttps = from.replace('http://', 'https://');
-    if (fromHttps !== from) {
-      await this.runWpCli(site, ['search-replace', fromHttps, to, '--all-tables']);
+  /**
+   * Rewrite every live domain found in the imported database to the local URL.
+   * Covers the connection URL plus the imported siteurl/home — a live site's
+   * canonical domain can differ from the domain used to connect (aliases,
+   * multi-domain setups), and any leftover causes redirects to the live site.
+   * Finally pins siteurl/home to the local URL explicitly.
+   */
+  private async rewriteImportedUrls(
+    site: any,
+    connectionUrl: string,
+    localUrl: string,
+    dbPrefix: string
+  ): Promise<void> {
+    const importedUrls = await this.getImportedSiteUrls(site, dbPrefix);
+
+    // Deduplicate by bare host (scheme variants are handled per-URL)
+    const bare = (u: string) => u.replace(/\/+$/, '').replace(/^https?:\/\//, '');
+    const localBare = bare(localUrl);
+    const fromBares = new Set(
+      [connectionUrl, ...importedUrls].map(bare).filter((b) => b && b !== localBare)
+    );
+
+    wpSyncLog('info', `Rewriting URLs → ${localUrl}: ${Array.from(fromBares).join(', ')}`);
+
+    for (const fromBare of fromBares) {
+      await this.searchReplaceUrls(site, `https://${fromBare}`, localUrl);
+    }
+
+    // Belt and braces: core URLs must be exactly the local URL
+    await this.runWpCli(site, ['option', 'update', 'siteurl', localUrl]);
+    await this.runWpCli(site, ['option', 'update', 'home', localUrl]);
+  }
+
+  /**
+   * Make sure the Local site's MySQL is up before syncing. If the site is
+   * stopped, ask Local's site process manager to start it; if that isn't
+   * possible, fail with a clear message instead of a raw socket error.
+   */
+  private async ensureSiteRunning(site: any): Promise<void> {
+    const userData = require('electron').app.getPath('userData');
+    const socketPath = path.join(userData, 'run', site.id, 'mysql', 'mysqld.sock');
+
+    if (fs.existsSync(socketPath)) return;
+
+    // Try to start the site through Local
+    try {
+      const siteProcessManager = this.serviceContainer?.siteProcessManager;
+      if (siteProcessManager?.start) {
+        wpSyncLog('info', `Site ${site.id} is not running — asking Local to start it...`);
+        await siteProcessManager.start(site);
+      }
+    } catch (err: any) {
+      wpSyncLog('error', `Auto-start of site ${site.id} failed: ${err.message}`);
+    }
+
+    try {
+      await this.waitForMySqlReady(site, 60000);
+    } catch {
+      throw new Error(
+        'The Local site is not running (MySQL is not available). ' +
+        'Start the site in Local, wait for it to finish booting, then try again.'
+      );
     }
   }
 
@@ -784,7 +891,11 @@ export class SyncManager {
       archive.on('error', reject);
 
       archive.pipe(output);
-      archive.directory(sitePath, false);
+      // Exclude host-specific PHP config: a .user.ini pulled from one host
+      // (open_basedir etc.) must never be pushed onto another.
+      archive.directory(sitePath, false, (entry: any) =>
+        path.basename(entry.name) === '.user.ini' ? false : entry
+      );
       archive.finalize();
     });
   }
