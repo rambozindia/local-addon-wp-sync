@@ -24,14 +24,17 @@ export interface FilesExportResult {
 export class WPSyncApiClient {
   private client: AxiosInstance;
   private connection: SiteConnection;
+  private apiBase: string;
+  /** True when the site can't serve pretty /wp-json URLs (broken or plain permalinks). */
+  private restRouteMode = false;
 
   constructor(connection: SiteConnection) {
     this.connection = connection;
     const restPrefix = connection.restPrefix || '/wp-json';
-    const baseURL = `${connection.siteUrl.replace(/\/+$/, '')}${restPrefix}/wp-sync/v1`;
+    this.apiBase = `${restPrefix}/wp-sync/v1`;
 
     this.client = axios.create({
-      baseURL,
+      baseURL: connection.siteUrl.replace(/\/+$/, ''),
       timeout: 300000, // 5 min timeout for large exports
       auth: {
         username: connection.username,
@@ -53,9 +56,37 @@ export class WPSyncApiClient {
       (r) => r,
       (err) => {
         const res = err?.response;
+        const cfg: any = err?.config;
+
+        // Sites with broken or "Plain" permalinks don't serve /wp-json at all
+        // (the pretty REST URLs need rewrite rules). On the first 404, retry
+        // the same request through the rewrite-free ?rest_route= form and
+        // stay in that mode for all subsequent requests.
+        if (
+          res?.status === 404 &&
+          !this.restRouteMode &&
+          !cfg?.__restRouteRetry &&
+          typeof cfg?.url === 'string' &&
+          cfg.url.startsWith(this.apiBase)
+        ) {
+          const path = cfg.url.slice(this.apiBase.length);
+          this.restRouteMode = true;
+          wpSyncLog('info', `${this.apiBase} returned 404 (pretty permalinks unavailable?) — retrying via ?rest_route=`);
+          return this.client.request({ ...cfg, url: this.u(path), __restRouteRetry: true });
+        }
+
         const serverMsg = res?.data?.error || res?.data?.message;
 
-        if (serverMsg) {
+        if (res?.data?.code === 'rest_no_route') {
+          err.message =
+            'The BlueBurn Live Sync companion plugin was not found on the live site ' +
+            '(REST route missing). Install and activate it, then try again.';
+        } else if (res?.data?.code === 'rest_forbidden') {
+          err.message =
+            'WordPress rejected the credentials ("Sorry, you are not allowed to do that"). ' +
+            'Check the username and Application Password (no extra spaces, password not revoked) ' +
+            'and make sure the user is an Administrator.';
+        } else if (serverMsg) {
           err.message = serverMsg;
         } else if (res) {
           // No structured error (e.g. a PHP fatal returned as HTML) — include
@@ -78,10 +109,22 @@ export class WPSyncApiClient {
   }
 
   /**
+   * Build the request URL for an endpoint path (e.g. '/status').
+   * Normally `<restPrefix>/wp-sync/v1<path>`; in restRouteMode the
+   * rewrite-free `/index.php?rest_route=` form is used instead.
+   */
+  private u(path: string): string {
+    if (this.restRouteMode) {
+      return `/index.php?rest_route=/wp-sync/v1${path}`;
+    }
+    return `${this.apiBase}${path}`;
+  }
+
+  /**
    * Test connectivity and verify the companion plugin is installed.
    */
   async testConnection(): Promise<{ connected: boolean; pluginVersion: string; wpVersion: string }> {
-    const response = await this.client.get('/status');
+    const response = await this.client.get(this.u('/status'));
     return response.data;
   }
 
@@ -89,7 +132,7 @@ export class WPSyncApiClient {
    * Get detailed info about the remote WordPress installation.
    */
   async getSiteInfo(): Promise<RemoteSiteInfo> {
-    const response = await this.client.get('/site-info');
+    const response = await this.client.get(this.u('/site-info'));
     return response.data;
   }
 
@@ -106,7 +149,7 @@ export class WPSyncApiClient {
       const body: Record<string, any> = { stepped: 1 };
       if (token) body.token = token;
 
-      const response = await this.client.post('/export/database', body, { timeout: 120000 });
+      const response = await this.client.post(this.u('/export/database'), body, { timeout: 120000 });
       const data = response.data;
 
       // Old companion plugin (<1.1) ignores `stepped` and exports in one shot
@@ -134,7 +177,7 @@ export class WPSyncApiClient {
       const body: Record<string, any> = { scope, stepped: 1 };
       if (token) body.token = token;
 
-      const response = await this.client.post('/export/files', body, { timeout: 120000 });
+      const response = await this.client.post(this.u('/export/files'), body, { timeout: 120000 });
       const data = response.data;
 
       if (data.complete === undefined || data.complete) {
@@ -153,7 +196,7 @@ export class WPSyncApiClient {
    * @param part - part index for multi-part file exports (plugin ≥1.1)
    */
   async download(token: string, part?: number): Promise<AxiosResponse> {
-    return this.client.get(`/download/${token}`, {
+    return this.client.get(this.u(`/download/${token}`), {
       responseType: 'stream',
       timeout: 1800000, // 30 min — exports can be hundreds of MB on slow links
       params: part !== undefined ? { part } : undefined,
@@ -185,7 +228,7 @@ export class WPSyncApiClient {
       knownLength: fileSize,
     });
 
-    const response = await this.client.post('/import/database', form, {
+    const response = await this.client.post(this.u('/import/database'), form, {
       headers: form.getHeaders(),
       timeout: 600000,
       maxContentLength: Infinity,
@@ -228,7 +271,7 @@ export class WPSyncApiClient {
           knownLength: length,
         });
 
-        const response = await this.client.post('/import/database/chunk', form, {
+        const response = await this.client.post(this.u('/import/database/chunk'), form, {
           headers: form.getHeaders(),
           timeout: 120000,
           maxContentLength: Infinity,
@@ -253,7 +296,7 @@ export class WPSyncApiClient {
     form.append('files', fs.createReadStream(zipFilePath));
     form.append('scope', scope);
 
-    const response = await this.client.post('/import/files', form, {
+    const response = await this.client.post(this.u('/import/files'), form, {
       headers: form.getHeaders(),
       timeout: 900000, // 15 min for large uploads
     });
@@ -266,7 +309,7 @@ export class WPSyncApiClient {
    */
   async getRemoteLog(): Promise<string> {
     try {
-      const response = await this.client.get('/log', { timeout: 30000 });
+      const response = await this.client.get(this.u('/log'), { timeout: 30000 });
       return response.data?.log || '';
     } catch {
       return '';
@@ -277,7 +320,7 @@ export class WPSyncApiClient {
    * Clean up temporary export files on the remote server.
    */
   async cleanup(token: string): Promise<void> {
-    await this.client.delete(`/cleanup/${token}`).catch(() => {
+    await this.client.delete(this.u(`/cleanup/${token}`)).catch(() => {
       // Non-critical, ignore cleanup failures
     });
   }

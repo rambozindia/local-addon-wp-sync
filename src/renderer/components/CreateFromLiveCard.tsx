@@ -64,9 +64,11 @@ export const CreateFromLiveCard: React.FC = () => {
     try {
       const result = await ipcRenderer.invoke(IPC_EVENTS.CREATE_SITE_FROM_LIVE, {
         connection: {
-          siteUrl: siteUrl.replace(/\/+$/, ''),
-          username,
-          applicationPassword: appPassword,
+          siteUrl: siteUrl.trim().replace(/\/+$/, ''),
+          // Trim: copy-pasted Application Passwords often carry a trailing
+          // space, which silently breaks Basic auth (rest_forbidden).
+          username: username.trim(),
+          applicationPassword: appPassword.trim(),
         },
         newSiteName: siteName.trim(),
       });

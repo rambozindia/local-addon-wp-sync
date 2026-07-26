@@ -23,10 +23,12 @@ export const ConnectionForm: React.FC<Props> = ({ onConnect }) => {
     setConnecting(true);
     try {
       await onConnect({
-        siteUrl: siteUrl.replace(/\/+$/, ''),
-        username,
-        applicationPassword,
-        restPrefix: restPrefix || '/wp-json',
+        siteUrl: siteUrl.trim().replace(/\/+$/, ''),
+        // Trim: copy-pasted Application Passwords often carry a trailing
+        // space, which silently breaks Basic auth (rest_forbidden).
+        username: username.trim(),
+        applicationPassword: applicationPassword.trim(),
+        restPrefix: restPrefix.trim() || '/wp-json',
       });
     } finally {
       setConnecting(false);

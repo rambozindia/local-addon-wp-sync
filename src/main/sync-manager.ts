@@ -69,6 +69,11 @@ export class SyncManager {
     try {
       fs.mkdirSync(tempDir, { recursive: true });
 
+      // Verify connectivity + credentials before any heavy work so auth
+      // problems surface immediately with a clear message.
+      onProgress({ stage: 'connecting', percent: 2, message: 'Verifying connection to the live site...' });
+      await client.testConnection();
+
       // The live site may use a custom table prefix (e.g. c_ instead of wp_);
       // the generated wp-config.php must match the imported tables.
       const dbPrefix = await this.getRemoteDbPrefix(client);
